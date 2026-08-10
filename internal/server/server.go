@@ -127,7 +127,17 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := s.relay.Forward(r.Context(), r.Method, r.URL.Path, r.URL.Query(), r.Header, r.Body)
+	// Buffer the request body so the gateway can apply the minimal
+	// client_metadata fix before forwarding.
+	rawBody, err := relayproxy.ReadBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]any{"message": "request body too large"},
+		})
+		return
+	}
+
+	res, err := s.relay.Forward(r.Context(), r.Method, r.URL.Path, r.URL.Query(), r.Header, rawBody)
 	if err != nil {
 		s.logger.Error("forward failed", "err", err)
 		writeJSON(w, http.StatusBadGateway, map[string]any{

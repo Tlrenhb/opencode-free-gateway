@@ -1,18 +1,16 @@
-// Package relayproxy implements the transparent /v1 passthrough.
+// Package relayproxy implements the /v1 forwarding path.
 //
-// The gateway treats every /v1/* request as opaque: the path, query, headers
-// and body are forwarded to the upstream unchanged. Responses (including SSE
-// streams) are streamed back byte-for-byte. The only interception is the
-// worker dispatch machinery:
-//   - choose a ready worker (sticky affinity, ban/cooldown aware)
-//   - route through the worker's bound proxy
-//   - on a 429, read the small error body to decide between a 24h ban
-//     (FreeUsageLimitError) and a soft cooldown
+// The gateway forwards to the upstream with a deliberately *constructed*
+// request: the body is passed through after a single compatibility fix
+// (dropping client_metadata, which the upstream rejects), and the outbound
+// headers are built from an allow-list rather than copied verbatim.
+// Responses (including SSE streams) are copied back byte-for-byte.
 package relayproxy
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,7 +18,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Tlrenhb/ocfreelay-go/internal/config"
@@ -32,8 +29,6 @@ var ErrNoWorker = errors.New("no workers configured")
 
 // ProxyDialer opens egress connections through a configured proxy.
 type ProxyDialer interface {
-	// TransportFor returns an http.RoundTripper that egresses via the given
-	// proxy (nil proxy = direct). Callers should reuse transports per proxy.
 	TransportFor(p *config.Proxy) (http.RoundTripper, error)
 }
 
@@ -46,8 +41,7 @@ type Client struct {
 	httpCli *http.Client
 }
 
-// New creates a relay client. transport is used for the direct (no-proxy)
-// fallback path; proxied requests build their own transports.
+// New creates a relay client.
 func New(cfg *config.Settings, rot *rotator.Rotator, dialer ProxyDialer, logger *slog.Logger) *Client {
 	return &Client{
 		cfg:    cfg,
@@ -62,18 +56,23 @@ func New(cfg *config.Settings, rot *rotator.Rotator, dialer ProxyDialer, logger 
 
 // Result describes one upstream attempt.
 type Result struct {
-	Status     int
-	Header     http.Header
-	Body       io.ReadCloser
-	WorkerID   string
-	ProxyID    string
-	Upstream   string
-	ContentLen int64
+	Status   int
+	Header   http.Header
+	Body     io.ReadCloser
+	WorkerID string
+	ProxyID  string
+}
+
+// ReadBody reads the full incoming body (bounded) so the gateway can apply
+// the minimal request fix before forwarding. Chat requests must be fully
+// buffered once; the upstream then receives a re-serialized payload.
+func ReadBody(r *http.Request) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r.Body, 32<<20))
 }
 
 // Forward relays one /v1 request upstream using the next ready worker.
-// It returns the upstream response for the caller to stream back.
-func (c *Client) Forward(ctx context.Context, method, path string, query url.Values, header http.Header, body io.Reader) (*Result, error) {
+// The request body should already be buffered via ReadBody (unless empty).
+func (c *Client) Forward(ctx context.Context, method, path string, query url.Values, header http.Header, rawBody []byte) (*Result, error) {
 	worker := c.rot.Pick(time.Now())
 	if worker == nil {
 		return nil, ErrNoWorker
@@ -81,12 +80,18 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 
 	upstreamURL := c.buildUpstreamURL(path, query)
 
-	req, err := http.NewRequestWithContext(ctx, method, upstreamURL, body)
+	// Minimal body fix: drop client_metadata (upstream rejects it).
+	outBody, err := stripClientMetadata(rawBody)
+	if err != nil {
+		return nil, fmt.Errorf("body fix: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, upstreamURL, bytes.NewReader(outBody))
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
-	// Copy client headers, then harden identity fields.
-	c.prepareHeaders(req, worker.APIKey, header)
+
+	c.buildOutboundHeaders(req, worker.APIKey, header)
 
 	var transport http.RoundTripper
 	var proxyID string
@@ -116,8 +121,7 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 		return nil, fmt.Errorf("upstream request failed: %w", err)
 	}
 
-	// 429 handling: read the (small) body to classify the failure. This is
-	// the one spot we do not stream untouched.
+	// 429 handling: read the (small) body to classify the failure.
 	if resp.StatusCode == http.StatusTooManyRequests {
 		bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
@@ -133,30 +137,16 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 			c.rot.MarkCooldown(worker.ID, time.Now())
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		// keep body so the client still sees the upstream error payload
-		return &Result{
-			Status:   resp.StatusCode,
-			Header:   resp.Header,
-			Body:     resp.Body,
-			WorkerID: worker.ID,
-			ProxyID:  proxyID,
-		}, nil
+		return &Result{Status: resp.StatusCode, Header: resp.Header, Body: resp.Body, WorkerID: worker.ID, ProxyID: proxyID}, nil
 	}
 
-	// Success (or other non-429 status): pass through untouched.
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		c.rot.MarkSuccess(worker.ID)
 	}
 	if resp.StatusCode >= 500 {
 		c.rot.MarkCooldown(worker.ID, time.Now())
 	}
-	return &Result{
-		Status:   resp.StatusCode,
-		Header:   resp.Header,
-		Body:     resp.Body,
-		WorkerID: worker.ID,
-		ProxyID:  proxyID,
-	}, nil
+	return &Result{Status: resp.StatusCode, Header: resp.Header, Body: resp.Body, WorkerID: worker.ID, ProxyID: proxyID}, nil
 }
 
 // CopyResponse streams an upstream result to the downstream client
@@ -164,7 +154,6 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 func CopyResponse(w http.ResponseWriter, r *Result) {
 	h := w.Header()
 	for k, vv := range r.Header {
-		// skip hop-by-hop headers managed by net/http
 		if strings.EqualFold(k, "Connection") || strings.EqualFold(k, "Keep-Alive") ||
 			strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Upgrade") {
 			continue
@@ -180,9 +169,32 @@ func CopyResponse(w http.ResponseWriter, r *Result) {
 	}
 }
 
+// stripClientMetadata removes the client_metadata field from a chat request
+// body. If the body is not JSON (or has no such field), it is returned
+// unchanged.
+func stripClientMetadata(raw []byte) ([]byte, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return raw, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		// Not JSON — pass through untouched.
+		return raw, nil
+	}
+	if _, ok := payload["client_metadata"]; !ok {
+		return raw, nil
+	}
+	delete(payload, "client_metadata")
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // buildUpstreamURL joins the base URL with the incoming /v1 path.
 // When the base URL already carries the API version (e.g. .../zen/v1), the
-// received /v1 prefix is stripped to avoid /v1/v1/... duplication.
+// received /v1 prefix is stripped.
 func (c *Client) buildUpstreamURL(path string, query url.Values) string {
 	upstream := strings.TrimRight(c.cfg.BaseURL, "/")
 	trimmed := path
@@ -194,28 +206,6 @@ func (c *Client) buildUpstreamURL(path string, query url.Values) string {
 		u += "?" + query.Encode()
 	}
 	return u
-}
-
-// prepareHeaders copies caller headers and applies identity/stream settings.
-func (c *Client) prepareHeaders(req *http.Request, apiKey string, src http.Header) {
-	for k, vv := range src {
-		lk := strings.ToLower(k)
-		// content-length is recomputed by net/http; drop to avoid confusion
-		if lk == "content-length" || lk == "host" {
-			continue
-		}
-		for _, v := range vv {
-			req.Header.Add(k, v)
-		}
-	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	if c.cfg.SynthesizeCLI && req.Header.Get("X-OpenCode-Client") == "" {
-		req.Header.Set("X-OpenCode-User-Agent", c.cfg.CLIUserAgent)
-		req.Header.Set("X-OpenCode-Client", c.cfg.CLIClient)
-		req.Header.Set("X-OpenCode-Project", c.cfg.CLIProject)
-	}
 }
 
 // resolveWorkerProxy finds the worker's bound pool proxy, if any.
@@ -234,15 +224,6 @@ func (c *Client) resolveWorkerProxy(w *rotator.State) *config.Proxy {
 		Username: pp.Username,
 		Password: pp.Password,
 	}
-}
-
-// IsRetryableError reports whether an upstream I/O error is a transient
-// connection fault worth treating as a worker failure (as opposed to a
-// client-side cancellation).
-func IsRetryableError(err error) bool {
-	return errors.Is(err, syscall.ECONNRESET) ||
-		errors.Is(err, syscall.ECONNREFUSED) ||
-		errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func truncate(s string, n int) string {
