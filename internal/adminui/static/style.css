@@ -160,6 +160,21 @@ th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: 
 .pool-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
 .pool-row:last-child { border-bottom: none; }
 .pool-row .addr { font-family: var(--mono); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paste-box {
+  border: 1px dashed var(--border); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 12px;
+  background: var(--bg-overlay);
+}
+.paste-box summary {
+  cursor: pointer; font-size: 13px; font-weight: 600;
+  color: var(--accent-warm); user-select: none;
+}
+.paste-box textarea {
+  width: 100%; min-height: 90px; margin-top: 8px;
+  font-family: var(--mono); font-size: 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-overlay); padding: 8px 10px;
+}
 
 /* toast + modal */
 .toast {

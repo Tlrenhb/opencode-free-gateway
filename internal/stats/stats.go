@@ -180,6 +180,49 @@ func (s *Store) Totals(ids []string) TokenUsage {
 	return t
 }
 
+// Overall is the aggregate stats view for the admin dashboard.
+type Overall struct {
+	RequestCount   int64    `json:"requestCount"`
+	ChatCount      int64    `json:"chatCount"`
+	ModelsCount    int64    `json:"modelsCount"`
+	SuccessCount   int64    `json:"successCount"`
+	ErrorCount     int64    `json:"errorCount"`
+	PromptTokens   int64    `json:"promptTokens"`
+	CompletionToks int64    `json:"completionTokens"`
+	TotalTokens    int64    `json:"totalTokens"`
+	CacheRead      int64    `json:"cacheReadTokens"`
+	CacheWrite     int64    `json:"cacheWriteTokens"`
+	CacheRate      *float64 `json:"cacheRate"`
+}
+
+// OverallStats aggregates counts + tokens + cache rate across workers.
+func (s *Store) OverallStats(ids []string) Overall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var o Overall
+	for _, id := range ids {
+		w, ok := s.stats[id]
+		if !ok {
+			continue
+		}
+		o.RequestCount += w.RequestCount
+		o.ChatCount += w.ChatCount
+		o.ModelsCount += w.ModelsCount
+		o.SuccessCount += w.SuccessCount
+		o.ErrorCount += w.ErrorCount
+		o.PromptTokens += w.PromptTokens
+		o.CompletionToks += w.CompletionTokens
+		o.TotalTokens += w.TotalTokens
+		o.CacheRead += w.CacheReadTokens
+		o.CacheWrite += w.CacheWriteTokens
+	}
+	if o.PromptTokens > 0 {
+		r := float64(o.CacheRead) / float64(o.PromptTokens)
+		o.CacheRate = &r
+	}
+	return o
+}
+
 // ResetAll clears every historical stat (explicit admin action only).
 func (s *Store) ResetAll() {
 	s.mu.Lock()

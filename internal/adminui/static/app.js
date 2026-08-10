@@ -333,6 +333,21 @@ $("probeBtn").addEventListener("click", async () => {
   } catch (err) { toast(err.message); }
 });
 
+/* 直接粘贴导入（每行一个代理，自动创建 worker） */
+$("pasteImportBtn").addEventListener("click", async () => {
+  const text = $("pasteInput").value;
+  if (!text.trim()) { toast("请先粘贴代理，每行一个"); return; }
+  try {
+    const d = await api.post("/admin/api/pool/import", { text });
+    let msg = "导入 " + d.added + " 条 · 自动创建 " + (d.workersCreated || 0) + " 个 worker · 跳过 " + d.skipped;
+    if (d.invalidLines && d.invalidLines.length) msg += " · 无效 " + d.invalidLines.length;
+    toast(msg);
+    $("pasteInput").value = "";
+    $("importResult").textContent = msg + (d.invalidLines?.length ? " — " + d.invalidLines.slice(0, 3).join(" | ") : "");
+    await refreshAll();
+  } catch (err) { toast(err.message); }
+});
+
 $("pruneBtn").addEventListener("click", async () => {
   if (!confirm("删除所有已禁用 / 不可用的代理？")) return;
   try {
@@ -424,9 +439,61 @@ $("saveGatewayBtn").addEventListener("click", async () => {
 /* ---------- 用量 ---------- */
 
 function renderUsage() {
+  // 总统计卡片
+  const o = status?.overall || {};
+  const rate = o.cacheRate != null ? (o.cacheRate * 100).toFixed(1) + "%" : "—";
+  const cards = [
+    { k: "总请求", v: fmt(o.requestCount) },
+    { k: "Chat 调用", v: fmt(o.chatCount) },
+    { k: "Models 调用", v: fmt(o.modelsCount) },
+    { k: "成功 / 失败", v: fmt(o.successCount) + " / " + fmt(o.errorCount) },
+    { k: "总 Tokens", v: fmt(o.totalTokens) },
+    { k: "缓存读 / 写", v: fmt(o.cacheReadTokens) + " / " + fmt(o.cacheWriteTokens) },
+    { k: "缓存率", v: rate },
+  ];
+  $("usageCards").innerHTML = cards.map((c) =>
+    '<div class="stat-card"><div class="k">' + c.k + '</div><div class="v">' + c.v + '</div></div>').join("");
+
+  // SVG 图表：成功/失败比例 + Chat/Models 分布
+  const svg = $("usageChart");
+  const totalCalls = (o.chatCount || 0) + (o.modelsCount || 0);
+  let chart = "";
+  if (totalCalls === 0) {
+    chart = '<text x="320" y="100" text-anchor="middle" fill="var(--muted)" font-size="13">暂无调用数据</text>';
+  } else {
+    // 左：成功 vs 失败
+    const okR = totalCalls > 0 ? (o.successCount / Math.max(totalCalls, 1)) : 0;
+    const okW = Math.max(8, okR * 200);
+    chart += '<text x="120" y="24" text-anchor="middle" font-size="12" fill="var(--text-2)">成功 / 失败</text>' +
+      '<rect x="20" y="34" width="200" height="26" rx="6" fill="var(--ok-dim)"/>' +
+      '<rect x="20" y="34" width="' + okW + '" height="26" rx="6" fill="var(--ok)"/>' +
+      '<text x="120" y="52" text-anchor="middle" font-size="11" fill="var(--text)">' + fmt(o.successCount) + ' 成功 / ' + fmt(o.errorCount) + ' 失败</text>' +
+      // 右：Chat vs Models
+      '<text x="440" y="24" text-anchor="middle" font-size="12" fill="var(--text-2)">Chat / Models 调用</text>' +
+      '<rect x="340" y="34" width="200" height="26" rx="6" fill="var(--accent-dim)"/>' +
+      '<rect x="340" y="34" width="' + Math.max(8, (o.chatCount / totalCalls) * 200) + '" height="26" rx="6" fill="var(--accent)"/>' +
+      '<text x="440" y="52" text-anchor="middle" font-size="11" fill="var(--text)">' + fmt(o.chatCount) + ' Chat / ' + fmt(o.modelsCount) + ' Models</text>';
+  }
+
+  // 底部：每 worker token 条形图
   const rows = status?.workerStats || [];
+  const maxTok = Math.max(1, ...rows.map((s) => s.TotalTokens || s.totalTokens || 0));
+  chart += '<text x="320" y="96" text-anchor="middle" font-size="12" fill="var(--text-2)">各 worker Token 用量</text>';
+  rows.slice(0, 6).forEach((s, i) => {
+    const id = s.AccountID || s.accountId || "?";
+    const tok = s.TotalTokens || s.totalTokens || 0;
+    const w = Math.max(4, (tok / maxTok) * 560);
+    const y = 106 + i * 14;
+    chart += '<text x="10" y="' + (y + 8) + '" font-size="10" fill="var(--text-2)" text-anchor="start">' + esc(id).slice(0, 18) + '</text>' +
+      '<rect x="120" y="' + y + '" width="' + w + '" height="8" rx="3" fill="var(--accent)"/>' +
+      '<text x="688" y="' + (y + 8) + '" font-size="10" fill="var(--muted)" text-anchor="end">' + fmt(tok) + '</text>';
+  });
+  svg.innerHTML = chart;
+
+  // 明细表
   $("usageBody").innerHTML = rows.map((s) => {
     const id = s.AccountID || s.accountId;
+    const sr = s.rate;
     return '<tr>' +
       '<td><strong>' + esc(id) + '</strong></td>' +
       '<td class="mono">' + fmt(s.RequestCount ?? s.requestCount) + '</td>' +
@@ -437,6 +504,7 @@ function renderUsage() {
       '<td class="mono"><strong>' + fmt(s.TotalTokens ?? s.totalTokens) + '</strong></td>' +
       '<td class="mono">' + fmt(s.CacheReadTokens ?? s.cacheReadTokens) + '</td>' +
       '<td class="mono">' + fmt(s.CacheWriteTokens ?? s.cacheWriteTokens) + '</td>' +
+      '<td class="mono">' + fmtRate(sr) + '</td>' +
       '<td class="muted">' + esc(s.lastRequestAt ? new Date(s.lastRequestAt).toLocaleString() : "—") + '</td>' +
       '</tr>';
   }).join("");

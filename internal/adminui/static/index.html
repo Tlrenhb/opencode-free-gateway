@@ -84,7 +84,7 @@
 
       <section class="page hidden" id="page-pool">
         <h1>代理池</h1>
-        <p class="sub">HTTP / SOCKS5 代理。导入 .txt 文件（每行一个 URL）、批量探活、一键清理失效。</p>
+        <p class="sub">HTTP / SOCKS5 代理。导入 .txt 文件或直接粘贴（每行一个），自动为每个新代理创建 worker（API Key 默认 public）。</p>
         <div class="panel">
           <div class="panel-hd">
             <h2>代理池</h2>
@@ -95,6 +95,11 @@
               <button class="btn btn-small danger" id="pruneBtn">清理失效</button>
             </div>
           </div>
+          <details class="paste-box" id="pasteBox">
+            <summary>＋ 直接粘贴代理（每行一个）</summary>
+            <textarea id="pasteInput" rows="5" placeholder="http://user:pass@host:port&#10;socks5://user:pass@host:port"></textarea>
+            <button class="btn btn-small btn-primary" id="pasteImportBtn" style="margin-top:8px">导入并自动创建 worker</button>
+          </details>
           <div id="poolList"></div>
           <div class="hint" id="importResult"></div>
         </div>
@@ -132,10 +137,15 @@
       <section class="page hidden" id="page-usage">
         <h1>用量</h1>
         <p class="sub">按 worker 统计 token 用量。删除 worker 不会删除历史统计。</p>
+        <div class="cards" id="usageCards"></div>
+        <div class="panel">
+          <div class="panel-hd"><h2>调用分布</h2></div>
+          <svg id="usageChart" viewBox="0 0 640 200" style="width:100%;height:auto;display:block"></svg>
+        </div>
         <div class="panel">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Worker</th><th>请求</th><th>Chat</th><th>Models</th><th>Prompt tok</th><th>完成 tok</th><th>总计 tok</th><th>缓存读</th><th>缓存写</th><th>最近请求</th></tr></thead>
+              <thead><tr><th>Worker</th><th>请求</th><th>Chat</th><th>Models</th><th>Prompt tok</th><th>完成 tok</th><th>总计 tok</th><th>缓存读</th><th>缓存写</th><th>缓存率</th><th>最近请求</th></tr></thead>
               <tbody id="usageBody"></tbody>
             </table>
           </div>

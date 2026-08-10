@@ -124,6 +124,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totals := s.stats.Totals(idsOf(workers))
+	overall := s.stats.OverallStats(idsOf(workers))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"running":      true,
 		"startedAt":    s.started.Format(time.RFC3339),
@@ -131,6 +132,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		"workers":      views,
 		"workerStats":  statsRows,
 		"totals":       totals,
+		"overall":      overall,
 		"pool":         s.pool.All(),
 		"callKeyCount": s.auth.CallKeyCount(),
 		"authEnabled":  s.cfg.RequireCallKeyAuth,
@@ -218,7 +220,9 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// apiPoolImport handles TXT bulk import (http + socks5 lines).
+// apiPoolImport handles TXT/paste bulk import (http + socks5 lines).
+// Every newly added proxy gets a matching worker automatically
+// (apiKey defaults to "public", bound to the new proxy).
 func (s *Server) apiPoolImport(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text string `json:"text"`
@@ -228,14 +232,47 @@ func (s *Server) apiPoolImport(w http.ResponseWriter, r *http.Request) {
 	}
 	valid, invalid := pool.ParseBatch(body.Text)
 	added, skipped, ids := s.pool.Import(valid)
+
+	// Auto-create one worker per new proxy.
+	for _, id := range ids {
+		it, ok := s.pool.Get(id)
+		if !ok {
+			continue
+		}
+		name := it.Host
+		// avoid duplicate worker ids
+		workerID := name
+		n := 1
+		for s.workerExists(workerID) {
+			n++
+			workerID = name + "-" + strconv.Itoa(n)
+		}
+		s.cfg.Workers = append(s.cfg.Workers, config.Worker{
+			ID:      workerID,
+			APIKey:  "public",
+			ProxyID: id,
+		})
+	}
+
 	if err := s.persistPool(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"message": err.Error()}})
 		return
 	}
+	s.resync()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"added": added, "skipped": skipped, "invalidLines": invalid,
-		"ids": ids,
+		"ids": ids, "workersCreated": len(ids),
 	})
+}
+
+// workerExists reports whether a worker with the given id exists.
+func (s *Server) workerExists(id string) bool {
+	for _, w := range s.cfg.Workers {
+		if w.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // apiPoolProbe probes all enabled proxies (or specific ids).
@@ -244,17 +281,10 @@ func (s *Server) apiPoolProbe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"latencies": latencies})
 }
 
-// apiPoolPrune removes dead/disabled entries.
+// apiPoolPrune removes dead/disabled entries and the workers bound to them.
 func (s *Server) apiPoolPrune(w http.ResponseWriter, r *http.Request) {
 	removed, ids := s.pool.Prune()
-	// Clear worker bindings that referenced pruned proxies.
-	for _, id := range ids {
-		for i := range s.cfg.Workers {
-			if s.cfg.Workers[i].ProxyID == id {
-				s.cfg.Workers[i].ProxyID = ""
-			}
-		}
-	}
+	s.deleteWorkersByProxyIDs(ids)
 	if err := s.persistPool(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"message": err.Error()}})
 		return
@@ -408,6 +438,26 @@ func (s *Server) resync() {
 		}{ID: w.ID, APIKey: w.APIKey, ProxyID: w.ProxyID})
 	}
 	s.rot.Sync(ws)
+}
+
+// deleteWorkersByProxyIDs removes every worker bound to one of the given
+// proxy ids. Stats history is intentionally untouched.
+func (s *Server) deleteWorkersByProxyIDs(proxyIDs []string) {
+	if len(proxyIDs) == 0 {
+		return
+	}
+	dead := make(map[string]bool, len(proxyIDs))
+	for _, id := range proxyIDs {
+		dead[id] = true
+	}
+	kept := s.cfg.Workers[:0]
+	for _, w := range s.cfg.Workers {
+		if w.ProxyID != "" && dead[w.ProxyID] {
+			continue
+		}
+		kept = append(kept, w)
+	}
+	s.cfg.Workers = kept
 }
 
 // resyncAuth refreshes the call-key allow-list in the auth manager.

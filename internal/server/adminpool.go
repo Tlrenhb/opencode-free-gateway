@@ -30,12 +30,8 @@ func (s *Server) apiPool(w http.ResponseWriter, r *http.Request) {
 		switch action {
 		case "remove":
 			s.pool.Remove(*body.ID)
-			// clear worker bindings
-			for i := range s.cfg.Workers {
-				if s.cfg.Workers[i].ProxyID == *body.ID {
-					s.cfg.Workers[i].ProxyID = ""
-				}
-			}
+			// Remove any worker bound to this proxy (stats history kept).
+			s.deleteWorkersByProxyIDs([]string{*body.ID})
 			if err := s.persistPool(); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"message": err.Error()}})
 				return
