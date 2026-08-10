@@ -180,8 +180,42 @@ th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: 
 .modal-x:hover { color: var(--text); }
 
 /* responsive */
+.menu-btn {
+  display: none;
+  border: none; background: transparent; font-size: 20px;
+  color: var(--text-2); padding: 6px 8px; border-radius: 8px;
+}
+.menu-btn:hover { background: var(--accent-dim); color: var(--accent-warm); }
+
 @media (max-width: 700px) {
-  .topnav { display: none; }
-  .content { padding: 18px 14px 60px; }
-  .topbar { padding: 0 12px; }
+  .menu-btn { display: inline-flex; align-items: center; }
+  .topnav {
+    position: fixed; top: 56px; left: 0; right: 0;
+    background: var(--bg-raised); border-bottom: 1px solid var(--border);
+    flex-direction: column; align-items: stretch; gap: 2px;
+    padding: 8px 12px; z-index: 60;
+    display: none; /* hidden by default, .open shows it */
+  }
+  .topnav.open { display: flex; }
+  .nav-btn { text-align: left; padding: 12px 12px; }
+  .brand-name { font-size: 15px; }
+  .content { padding: 18px 12px 60px; }
+  .topbar { padding: 0 10px; gap: 8px; }
+  .topbar-right .btn { padding: 4px 10px; font-size: 12px; }
+  .cards { grid-template-columns: 1fr 1fr; }
+  .login-card { width: 92vw; max-width: 340px; }
+  .table-wrap { -webkit-overflow-scrolling: touch; }
+  /* 表格卡片化：手机上把 worker 行转成块，不再横向挤 */
+  table { font-size: 12px; }
+  th, td { padding: 6px 6px; }
+  .err-text { max-width: 140px; }
+  .worker-row, .pool-row { flex-wrap: wrap; gap: 8px; }
+  .worker-row .grow { width: 100%; }
+}
+
+@media (max-width: 420px) {
+  .cards { grid-template-columns: 1fr; }
+  .login-sub { font-size: 12px; }
+  .btn-primary { min-height: 44px; }
+  .topbar-right .ghost { display: none; }
 }

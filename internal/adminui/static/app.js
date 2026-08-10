@@ -1,4 +1,4 @@
-/* opencode-free-gateway admin app — talks to /admin/api/* */
+/* opencode-free-gateway 管理面板 — 调用 /admin/api/* */
 const $ = (id) => document.getElementById(id);
 
 let status = null;
@@ -36,42 +36,49 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.add("hidden"), 2600);
 }
 
-/* ---------- login / setup ---------- */
+/* ---------- 移动端菜单 ---------- */
+$("menuBtn").addEventListener("click", () => {
+  $("topnav").classList.toggle("open");
+});
+document.querySelectorAll(".nav-btn").forEach((b) => {
+  b.addEventListener("click", () => $("topnav").classList.remove("open"));
+});
+
+/* ---------- 登录 / 首次设置 ---------- */
+
+let setupMode = false;
 
 async function checkAuth() {
   const r = await fetch("/admin/api/status");
   if (r.ok) { showApp(); return; }
-  // 401: login (or first-run setup)
   try {
     const setup = await (await fetch("/admin/api/setup")).json();
     if (setup.setupRequired) {
       setupMode = true;
       $("setupHint").style.display = "";
-      $("loginBtn").textContent = "Set password";
+      $("loginBtn").textContent = "设置密码";
     }
   } catch (_) {}
   showLogin();
 }
 
-let setupMode = false;
-
 $("loginBtn").addEventListener("click", async () => {
   const pass = $("loginPass").value;
+  if (!pass) { $("loginErr").textContent = "请输入密码"; return; }
   try {
     if (setupMode) {
-      // first run: password field acts as the initial setup
       await api.put("/admin/api/settings", { password: pass });
       setupMode = false;
-      toast("Password set — sign in");
+      toast("密码已设置，请登录");
       $("setupHint").style.display = "none";
-      $("loginBtn").textContent = "Sign in";
+      $("loginBtn").textContent = "登录";
       $("loginPass").value = "";
       $("loginErr").textContent = "";
       return;
     }
     const d = await api.post("/admin/api/login", { password: pass });
     if (d.token) { showApp(); await refreshAll(); }
-    else $("loginErr").textContent = "Wrong password";
+    else $("loginErr").textContent = "密码错误";
   } catch (e) {
     $("loginErr").textContent = e.message;
   }
@@ -94,7 +101,7 @@ $("logoutBtn").addEventListener("click", async () => {
   showLogin();
 });
 
-/* ---------- navigation ---------- */
+/* ---------- 导航 ---------- */
 
 document.querySelectorAll(".nav-btn").forEach((b) => {
   b.addEventListener("click", () => {
@@ -105,7 +112,7 @@ document.querySelectorAll(".nav-btn").forEach((b) => {
   });
 });
 
-/* ---------- refresh + render ---------- */
+/* ---------- 刷新 + 渲染 ---------- */
 
 async function refreshAll() {
   try {
@@ -120,7 +127,7 @@ async function refreshAll() {
     renderUsage();
   } catch (e) {
     if (e instanceof TypeError && /Failed to fetch/.test(e.message)) {
-      toast("Server unreachable");
+      toast("服务器不可达");
     }
   }
 }
@@ -128,7 +135,7 @@ $("refreshBtn").addEventListener("click", refreshAll);
 
 function renderChrome() {
   const pill = $("runPill");
-  pill.textContent = status.running ? "running" : "stopped";
+  pill.textContent = status.running ? "运行中" : "已停止";
   pill.className = "pill" + (status.running ? "" : " down");
 }
 
@@ -140,26 +147,25 @@ function esc(s) {
 
 function renderOverview() {
   const cards = [
-    { k: "Upstream", v: esc(status.baseUrl || "—") },
-    { k: "Workers", v: status.workers?.length ?? 0 },
-    { k: "Pool proxies", v: status.pool?.length ?? 0 },
-    { k: "Call keys", v: status.callKeyCount ?? 0 },
-    { k: "Auth required", v: status.authEnabled ? "on" : "off" },
+    { k: "上游", v: esc(status.baseUrl || "—") },
+    { k: "Worker", v: status.workers?.length ?? 0 },
+    { k: "代理", v: status.pool?.length ?? 0 },
+    { k: "调用 Key", v: status.callKeyCount ?? 0 },
+    { k: "鉴权", v: status.authEnabled ? "开启" : "关闭" },
   ];
   $("ovCards").innerHTML = cards.map((c) =>
     '<div class="stat-card"><div class="k">' + c.k + '</div><div class="v">' + c.v + '</div></div>').join("");
 
   const t = status.totals || {};
-  $("ovTotals").textContent = fmt(t.TotalTokens ?? t.totalTokens ?? 0) + " tok total";
+  $("ovTotals").textContent = fmt(t.TotalTokens ?? t.totalTokens ?? 0) + " tok 总计";
 
   const rows = status.workers || [];
-  if (!rows.length) { $("ovWorkers").innerHTML = '<tr><td colspan="9" class="muted">No workers configured</td></tr>'; return; }
-  // pair with stats
+  if (!rows.length) { $("ovWorkers").innerHTML = '<tr><td colspan="9" class="muted">暂无 worker</td></tr>'; return; }
   const statMap = {};
   (status.workerStats || []).forEach((s) => { statMap[s.AccountID || s.accountId] = s; });
   $("ovWorkers").innerHTML = rows.map((w) => {
     const st = statMap[w.id];
-    const badge = '<span class="badge ' + (w.status === "banned-24h" ? "banned" : w.status === "cooldown" ? "cooldown" : "ready") + '">' + (w.status === "banned-24h" ? "banned 24h" : w.status) + '</span>';
+    const badge = '<span class="badge ' + (w.status === "banned-24h" ? "banned" : w.status === "cooldown" ? "cooldown" : "ready") + '">' + (w.status === "banned-24h" ? "封禁 24h" : w.status === "cooldown" ? "冷却中" : "就绪") + '</span>';
     const err = w.lastError
       ? '<div class="err-text" title="' + esc(w.lastError) + '">' + esc(w.lastError) + '</div>'
       : '<span class="muted">—</span>';
@@ -176,32 +182,32 @@ function renderOverview() {
   }).join("");
 }
 
-/* ---------- workers ---------- */
+/* ---------- worker ---------- */
 
 function renderWorkers() {
   const box = $("workerList");
   const ws = (status?.workers || []);
-  if (!ws.length) { box.innerHTML = '<div class="muted">No workers yet — add one below.</div>'; return; }
+  if (!ws.length) { box.innerHTML = '<div class="muted">暂无 worker — 点击添加。</div>'; return; }
   box.innerHTML = ws.map((w) => {
-    const badge = '<span class="badge ' + (w.status === "banned-24h" ? "banned" : w.status === "cooldown" ? "cooldown" : "ready") + '">' + (w.status === "banned-24h" ? "banned 24h" : w.status) + '</span>';
-    const proxy = w.proxyId ? esc(w.proxyId) : '<span class="muted">direct</span>';
+    const badge = '<span class="badge ' + (w.status === "banned-24h" ? "banned" : w.status === "cooldown" ? "cooldown" : "ready") + '">' + (w.status === "banned-24h" ? "封禁 24h" : w.status === "cooldown" ? "冷却中" : "就绪") + '</span>';
+    const proxy = w.proxyId ? esc(w.proxyId) : '<span class="muted">直连</span>';
     return '<div class="worker-row">' +
       '<div class="grow"><div class="id">' + esc(w.id) + ' ' + badge + '</div>' +
-      '<div class="meta">proxy: ' + proxy + '</div>' +
+      '<div class="meta">代理: ' + proxy + '</div>' +
       (w.lastError ? '<div class="err-text" title="' + esc(w.lastError) + '">' + esc(w.lastError) + '</div>' : '') +
       '</div>' +
-      '<button class="btn btn-small" data-edit-worker="' + esc(w.id) + '">Edit</button>' +
-      '<button class="btn btn-small danger" data-del-worker="' + esc(w.id) + '">Delete</button>' +
+      '<button class="btn btn-small" data-edit-worker="' + esc(w.id) + '">编辑</button>' +
+      '<button class="btn btn-small danger" data-del-worker="' + esc(w.id) + '">删除</button>' +
       '</div>';
   }).join("");
 
   box.querySelectorAll("[data-del-worker]").forEach((b) => {
     b.addEventListener("click", async () => {
       const id = b.dataset.delWorker;
-      if (!confirm("Delete worker " + id + "? Its stats history is kept.")) return;
+      if (!confirm("删除 worker " + id + "？统计历史会保留。")) return;
       try {
         await api.post("/admin/api/workers", { action: "delete", id });
-        toast("Worker deleted (stats kept)");
+        toast("已删除（统计保留）");
         await refreshAll();
       } catch (e) { toast(e.message); }
     });
@@ -219,17 +225,17 @@ function openWorkerModal(id) {
   const poolOptions = (status?.pool || [])
     .map((p) => '<option value="' + esc(p.ID ?? p.id) + '"' + ((w?.proxyId === (p.ID ?? p.id)) ? " selected" : "") + '>' + esc(p.Name ?? p.name) + '</option>')
     .join("");
-  openModal(isEdit ? "Edit worker" : "Add worker", `
+  openModal(isEdit ? "编辑 worker" : "添加 worker", `
     <label class="field">ID</label>
     <input class="input" id="wId" value="${esc(isEdit ? id : "")}" ${isEdit ? "readonly" : ""}>
-    <label class="field">API key</label>
+    <label class="field">API Key</label>
     <input class="input mono" id="wKey" value="${esc(w?.apiKey ?? "")}" placeholder="sk-...">
-    <label class="field">Proxy</label>
+    <label class="field">代理</label>
     <select class="input" id="wProxy">
-      <option value="">(direct)</option>
+      <option value="">（直连）</option>
       ${poolOptions}
     </select>
-    <button class="btn btn-primary" style="margin-top:14px">Save</button>
+    <button class="btn btn-primary" style="margin-top:14px">保存</button>
   `, async (bodyBox) => {
     const spec = {
       action: "upsert",
@@ -237,40 +243,39 @@ function openWorkerModal(id) {
       apiKey: bodyBox.querySelector("#wKey").value,
       proxyId: bodyBox.querySelector("#wProxy").value || null,
     };
-    if (!spec.id) { toast("ID required"); return; }
+    if (!spec.id) { toast("ID 不能为空"); return; }
     await api.post("/admin/api/workers", spec);
-    toast("Saved");
+    toast("已保存");
     await refreshAll();
   });
 }
 
-/* ---------- pool ---------- */
+/* ---------- 代理池 ---------- */
 
 function renderPool() {
   const box = $("poolList");
   const pool = status?.pool || [];
-  if (!pool.length) { box.innerHTML = '<div class="muted">Proxy pool is empty. Import a TXT or add manually.</div>'; return; }
+  if (!pool.length) { box.innerHTML = '<div class="muted">代理池为空。导入 TXT 或手动添加。</div>'; return; }
   box.innerHTML = pool.map((p) => {
     const mask = p.Username ? esc(p.Username) + ":****" : "";
     const proto = p.Type || "http";
     const state = p.Enabled && p.Usable
-      ? '<span class="badge ready">ok</span>'
+      ? '<span class="badge ready">正常</span>'
       : p.Enabled
-        ? '<span class="badge cooldown">unusable</span>'
-        : '<span class="badge off">disabled</span>';
+        ? '<span class="badge cooldown">不可用</span>'
+        : '<span class="badge off">已禁用</span>';
     return '<div class="pool-row">' +
       '<span class="addr" title="' + esc(p.Name ?? "") + '">' + proto + '://' + esc(mask) + '@' + esc(p.Host) + ':' + esc(p.Port) + '</span>' +
       state +
-      '<button class="btn btn-small" data-toggle-proxy="' + esc(p.ID ?? p.id) + '">' + (p.Enabled ? "Disable" : "Enable") + '</button>' +
-      '<button class="btn btn-small danger" data-del-proxy="' + esc(p.ID ?? p.id) + '">Delete</button>' +
+      '<button class="btn btn-small" data-toggle-proxy="' + esc(p.ID ?? p.id) + '">' + (p.Enabled ? "禁用" : "启用") + '</button>' +
+      '<button class="btn btn-small danger" data-del-proxy="' + esc(p.ID ?? p.id) + '">删除</button>' +
       '</div>';
   }).join("");
 
   box.querySelectorAll("[data-del-proxy]").forEach((b) => {
     b.addEventListener("click", async () => {
-      const pid = b.dataset.delProxy;
-      const d = await api.post("/admin/api/pool/remove", { id: pid });
-      toast("Removed");
+      await api.post("/admin/api/pool/remove", { id: b.dataset.delProxy });
+      toast("已删除");
       await refreshAll();
     });
   });
@@ -289,8 +294,8 @@ $("txtImport").addEventListener("change", async (e) => {
   const text = await file.text();
   try {
     const d = await api.post("/admin/api/pool/import", { text });
-    let msg = "Imported " + d.added + " · skipped " + d.skipped;
-    if (d.invalidLines && d.invalidLines.length) msg += " · invalid " + d.invalidLines.length;
+    let msg = "导入 " + d.added + " 条 · 跳过 " + d.skipped;
+    if (d.invalidLines && d.invalidLines.length) msg += " · 无效 " + d.invalidLines.length;
     $("importResult").textContent = msg + (d.invalidLines?.length ? " — " + d.invalidLines.slice(0, 3).join(" | ") : "");
     await refreshAll();
   } catch (err) { toast(err.message); }
@@ -300,32 +305,32 @@ $("probeBtn").addEventListener("click", async () => {
   try {
     const d = await api.post("/admin/api/pool/probe", {});
     const ok = Object.keys(d.latencies || {}).length;
-    toast("Probe done: " + ok + " reachable");
+    toast("探活完成：" + ok + " 个可达");
     await refreshAll();
   } catch (err) { toast(err.message); }
 });
 
 $("pruneBtn").addEventListener("click", async () => {
-  if (!confirm("Remove all disabled / unusable proxies?")) return;
+  if (!confirm("删除所有已禁用 / 不可用的代理？")) return;
   try {
     const d = await api.post("/admin/api/pool/prune", {});
-    toast("Pruned " + d.removed + " dead proxies");
+    toast("已清理 " + d.removed + " 个失效代理");
     await refreshAll();
   } catch (err) { toast(err.message); }
 });
 
-/* ---------- call keys ---------- */
+/* ---------- 调用 Key ---------- */
 
 function renderCallKeys() {
   const box = $("keyList");
   const keys = settings?.callKeys || [];
-  if (!keys.length) { box.innerHTML = '<div class="muted">No call keys yet.</div>'; return; }
+  if (!keys.length) { box.innerHTML = '<div class="muted">暂无调用 Key。</div>'; return; }
   box.innerHTML = keys.map((k) =>
     '<div class="worker-row"><div class="grow">' +
     '<div class="id mono">' + esc(k.Key) + '</div>' +
-    '<div class="meta">' + esc(k.Name || "") + ' · ' + (k.Enabled ? "enabled" : "disabled") + '</div></div>' +
-    '<button class="btn btn-small" data-toggle-key="' + esc(k.Key) + '">' + (k.Enabled ? "Disable" : "Enable") + '</button>' +
-    '<button class="btn btn-small danger" data-del-key="' + esc(k.Key) + '">Delete</button></div>').join("");
+    '<div class="meta">' + esc(k.Name || "") + ' · ' + (k.Enabled ? "启用中" : "已禁用") + '</div></div>' +
+    '<button class="btn btn-small" data-toggle-key="' + esc(k.Key) + '">' + (k.Enabled ? "禁用" : "启用") + '</button>' +
+    '<button class="btn btn-small danger" data-del-key="' + esc(k.Key) + '">删除</button></div>').join("");
   box.querySelectorAll("[data-del-key]").forEach((b) => {
     b.addEventListener("click", async () => {
       await api.post("/admin/api/callkeys", { action: "delete", key: b.dataset.delKey });
@@ -342,12 +347,12 @@ function renderCallKeys() {
 }
 
 $("addKeyBtn").addEventListener("click", () => {
-  openModal("Add call key", `
+  openModal("添加调用 Key", `
     <label class="field">Key</label>
     <input class="input mono" id="kKey" placeholder="sk-client-...">
-    <label class="field">Label (optional)</label>
-    <input class="input" id="kName" placeholder="my script">
-    <button class="btn btn-primary" style="margin-top:14px">Add</button>
+    <label class="field">备注（可选）</label>
+    <input class="input" id="kName" placeholder="我的脚本">
+    <button class="btn btn-primary" style="margin-top:14px">添加</button>
   `, async (bodyBox) => {
     await api.post("/admin/api/callkeys", {
       action: "upsert",
@@ -355,12 +360,12 @@ $("addKeyBtn").addEventListener("click", () => {
       name: bodyBox.querySelector("#kName").value.trim(),
       enabled: true,
     });
-    toast("Key added");
+    toast("Key 已添加");
     await refreshAll();
   });
 });
 
-/* ---------- gateway ---------- */
+/* ---------- 网关 ---------- */
 
 function renderGateway() {
   if (!settings) return;
@@ -388,12 +393,12 @@ $("saveGatewayBtn").addEventListener("click", async () => {
       requireCallKeyAuth: $("gReqAuth").checked,
       password: $("gPassword").value || undefined,
     });
-    toast("Saved");
+    toast("已保存");
     await refreshAll();
   } catch (e) { toast(e.message); }
 });
 
-/* ---------- usage ---------- */
+/* ---------- 用量 ---------- */
 
 function renderUsage() {
   const rows = status?.workerStats || [];
@@ -414,7 +419,7 @@ function renderUsage() {
   }).join("");
 }
 
-/* ---------- modal ---------- */
+/* ---------- 弹窗 ---------- */
 
 function openModal(title, html, onSave) {
   $("modalTitle").textContent = title;
@@ -435,11 +440,10 @@ function closeModal() { $("modal").classList.add("hidden"); }
 $("modalClose").addEventListener("click", closeModal);
 $("modal").addEventListener("click", (e) => { if (e.target === $("modal")) closeModal(); });
 
-/* ---------- boot ---------- */
+/* ---------- 启动 ---------- */
 
 (async function boot() {
   await checkAuth();
-  // if app is visible, load data
   if (!$("appView").classList.contains("hidden")) {
     await refreshAll();
   }

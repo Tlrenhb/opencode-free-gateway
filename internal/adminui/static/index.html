@@ -1,62 +1,63 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>opencode-free-gateway — Admin</title>
+<title>opencode-free-gateway — 管理面板</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/admin/static/style.css">
 </head>
 <body>
-  <!-- Login -->
+  <!-- 登录 -->
   <div id="loginView" class="login-wrap hidden">
     <div class="login-card">
-      <div class="login-logo">OCFreeRelay</div>
-      <p class="login-sub">Admin console</p>
-      <label class="field" for="loginPass">Password</label>
+      <div class="login-logo">opencode-free-gateway</div>
+      <p class="login-sub">管理员控制台</p>
+      <label class="field" for="loginPass">密码</label>
       <input class="input" id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password">
-      <button class="btn btn-primary" id="loginBtn" style="margin-top:14px">Sign in</button>
+      <button class="btn btn-primary" id="loginBtn" style="margin-top:14px">登录</button>
       <div class="login-err" id="loginErr"></div>
-      <p class="login-hint" id="setupHint" style="display:none">No admin password set yet — set one now. This becomes the login password for the console.</p>
+      <p class="login-hint" id="setupHint" style="display:none">尚未设置管理员密码 — 在此设置初始密码，之后用它登录控制台。</p>
     </div>
   </div>
 
-  <!-- App -->
+  <!-- 主界面 -->
   <div id="appView" class="app hidden">
     <header class="topbar">
+      <button class="menu-btn" id="menuBtn" aria-label="菜单">☰</button>
       <div class="brand">
-        <span class="brand-name">OCFreeRelay</span>
+        <span class="brand-name">opencode-free-gateway</span>
         <span class="pill" id="runPill">—</span>
       </div>
-      <nav class="topnav">
-        <button class="nav-btn" data-page="overview">Overview</button>
-        <button class="nav-btn" data-page="workers">Workers</button>
-        <button class="nav-btn" data-page="pool">Proxy Pool</button>
-        <button class="nav-btn" data-page="callkeys">Call Keys</button>
-        <button class="nav-btn" data-page="gateway">Gateway</button>
-        <button class="nav-btn" data-page="usage">Usage</button>
+      <nav class="topnav" id="topnav">
+        <button class="nav-btn" data-page="overview">概览</button>
+        <button class="nav-btn" data-page="workers">Worker</button>
+        <button class="nav-btn" data-page="pool">代理池</button>
+        <button class="nav-btn" data-page="callkeys">调用 Key</button>
+        <button class="nav-btn" data-page="gateway">网关</button>
+        <button class="nav-btn" data-page="usage">用量</button>
       </nav>
       <div class="topbar-right">
-        <button class="btn btn-small" id="refreshBtn">⟳ Refresh</button>
-        <button class="btn btn-small ghost" id="logoutBtn">Logout</button>
+        <button class="btn btn-small" id="refreshBtn">⟳ 刷新</button>
+        <button class="btn btn-small ghost" id="logoutBtn">退出</button>
       </div>
     </header>
 
     <main class="content">
       <section class="page" id="page-overview">
-        <h1>Overview</h1>
-        <p class="sub">Gateway health, workers and proxy pool at a glance.</p>
+        <h1>概览</h1>
+        <p class="sub">网关健康、worker 与代理池一览。</p>
         <div class="cards" id="ovCards"></div>
         <div class="panel">
-          <div class="panel-hd"><h2>Workers</h2><span class="muted mono" id="ovTotals"></span></div>
+          <div class="panel-hd"><h2>Worker</h2><span class="muted mono" id="ovTotals"></span></div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Worker</th><th>Status</th><th>Req</th><th>OK</th><th>Err</th>
-                  <th>Tokens</th><th>Cache r/w</th><th>Cache rate</th><th>Last error</th>
+                  <th>Worker</th><th>状态</th><th>请求</th><th>成功</th><th>失败</th>
+                  <th>Tokens</th><th>缓存读/写</th><th>缓存率</th><th>最近错误</th>
                 </tr>
               </thead>
               <tbody id="ovWorkers"></tbody>
@@ -66,28 +67,28 @@
       </section>
 
       <section class="page hidden" id="page-workers">
-        <h1>Workers</h1>
-        <p class="sub">Each worker is one OpenCode account. 429 free-limit bans it for 24h automatically.</p>
+        <h1>Worker</h1>
+        <p class="sub">每个 worker 对应一个 OpenCode 账号。429 免费额度超限会自动封禁 24 小时。</p>
         <div class="panel">
           <div class="panel-hd">
-            <h2>Worker list</h2>
-            <button class="btn btn-small btn-primary" id="addWorkerBtn">＋ Add worker</button>
+            <h2>Worker 列表</h2>
+            <button class="btn btn-small btn-primary" id="addWorkerBtn">＋ 添加 worker</button>
           </div>
           <div id="workerList"></div>
         </div>
       </section>
 
       <section class="page hidden" id="page-pool">
-        <h1>Proxy Pool</h1>
-        <p class="sub">HTTP / SOCKS5 proxies. Import a .txt file (one URL per line), probe health, prune dead.</p>
+        <h1>代理池</h1>
+        <p class="sub">HTTP / SOCKS5 代理。导入 .txt 文件（每行一个 URL）、批量探活、一键清理失效。</p>
         <div class="panel">
           <div class="panel-hd">
-            <h2>Pool</h2>
+            <h2>代理池</h2>
             <div class="actions">
-              <label class="btn btn-small" for="txtImport">↑ Import TXT</label>
+              <label class="btn btn-small" for="txtImport">↑ 导入 TXT</label>
               <input type="file" id="txtImport" accept=".txt,.list,text/plain" hidden>
-              <button class="btn btn-small" id="probeBtn">Probe all</button>
-              <button class="btn btn-small danger" id="pruneBtn">Prune dead</button>
+              <button class="btn btn-small" id="probeBtn">全部探活</button>
+              <button class="btn btn-small danger" id="pruneBtn">清理失效</button>
             </div>
           </div>
           <div id="poolList"></div>
@@ -96,41 +97,41 @@
       </section>
 
       <section class="page hidden" id="page-callkeys">
-        <h1>Call Keys</h1>
-        <p class="sub">Keys your clients use to call the gateway. When auth is required, /v1/* rejects unknown keys.</p>
+        <h1>调用 Key</h1>
+        <p class="sub">客户端调用网关使用的 Key。开启鉴权后，/v1/* 会拒绝未知 Key。</p>
         <div class="panel">
           <div class="panel-hd">
-            <h2>Keys</h2>
-            <button class="btn btn-small btn-primary" id="addKeyBtn">＋ Add key</button>
+            <h2>Key 列表</h2>
+            <button class="btn btn-small btn-primary" id="addKeyBtn">＋ 添加 Key</button>
           </div>
           <div id="keyList"></div>
         </div>
       </section>
 
       <section class="page hidden" id="page-gateway">
-        <h1>Gateway</h1>
-        <p class="sub">Upstream target and identity headers.</p>
+        <h1>网关</h1>
+        <p class="sub">上游目标与身份头设置。</p>
         <div class="panel">
-          <div class="form-row"><label>Upstream base URL</label><input class="input" id="gBase"></div>
-          <div class="form-row"><label>Listen port (restart to apply)</label><input class="input" id="gPort" type="number"></div>
+          <div class="form-row"><label>上游 Base URL</label><input class="input" id="gBase"></div>
+          <div class="form-row"><label>监听端口（重启生效）</label><input class="input" id="gPort" type="number"></div>
           <div class="form-row"><label>CLI User-Agent</label><input class="input" id="gUA"></div>
           <div class="form-row"><label>x-opencode-client</label><input class="input" id="gClient"></div>
           <div class="form-row"><label>x-opencode-project</label><input class="input" id="gProject"></div>
-          <div class="check-row"><input type="checkbox" id="gSynth"><label for="gSynth">Synthesize CLI identity headers</label></div>
-          <div class="check-row"><input type="checkbox" id="gFreeFilter"><label for="gFreeFilter">Filter /v1/models to free models only</label></div>
-          <div class="check-row"><input type="checkbox" id="gReqAuth"><label for="gReqAuth">Require call key auth on /v1/*</label></div>
-          <div class="form-row"><label>Change admin password (leave empty to keep)</label><input class="input" id="gPassword" type="password" placeholder="new password"></div>
-          <button class="btn btn-primary" id="saveGatewayBtn">Save changes</button>
+          <div class="check-row"><input type="checkbox" id="gSynth"><label for="gSynth">合成 CLI 身份头</label></div>
+          <div class="check-row"><input type="checkbox" id="gFreeFilter"><label for="gFreeFilter">/v1/models 仅返回免费模型</label></div>
+          <div class="check-row"><input type="checkbox" id="gReqAuth"><label for="gReqAuth">/v1/* 要求调用 Key 鉴权</label></div>
+          <div class="form-row"><label>修改管理员密码（留空保持不变）</label><input class="input" id="gPassword" type="password" placeholder="新密码"></div>
+          <button class="btn btn-primary" id="saveGatewayBtn">保存设置</button>
         </div>
       </section>
 
       <section class="page hidden" id="page-usage">
-        <h1>Usage</h1>
-        <p class="sub">Token usage by worker. Deleting a worker never deletes its history.</p>
+        <h1>用量</h1>
+        <p class="sub">按 worker 统计 token 用量。删除 worker 不会删除历史统计。</p>
         <div class="panel">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Worker</th><th>Req</th><th>Chat</th><th>Models</th><th>Prompt tok</th><th>Completion tok</th><th>Total tok</th><th>Cache read</th><th>Cache write</th><th>Last req</th></tr></thead>
+              <thead><tr><th>Worker</th><th>请求</th><th>Chat</th><th>Models</th><th>Prompt tok</th><th>完成 tok</th><th>总计 tok</th><th>缓存读</th><th>缓存写</th><th>最近请求</th></tr></thead>
               <tbody id="usageBody"></tbody>
             </table>
           </div>
@@ -139,10 +140,10 @@
     </main>
   </div>
 
-  <!-- Toast -->
+  <!-- 提示 -->
   <div class="toast hidden" id="toast"></div>
 
-  <!-- Modal -->
+  <!-- 弹窗 -->
   <div class="modal hidden" id="modal">
     <div class="modal-card">
       <div class="modal-hd"><h2 id="modalTitle"></h2><button class="modal-x" id="modalClose">×</button></div>
