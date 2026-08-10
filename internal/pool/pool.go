@@ -170,8 +170,11 @@ func (m *Manager) Import(parsed []Parsed) (added, skipped int, ids []string) {
 			Username: p.Username,
 			Password: p.Password,
 			Enabled:  true,
-			Usable:   false, // proven by probe before use
-			Source:   "txt",
+			// Imported http/socks5 proxies are used immediately (matches the
+			// original TS gateway: protocol implies usable). Failed requests
+			// naturally mark the worker cooldown and rotate — no pre-probe gate.
+			Usable: true,
+			Source: "txt",
 		}
 		m.items[id] = it
 		m.order = append(m.order, id)

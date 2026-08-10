@@ -263,6 +263,16 @@ func (s *Server) apiPoolImport(w http.ResponseWriter, r *http.Request) {
 		"added": added, "skipped": skipped, "invalidLines": invalid,
 		"ids": ids, "workersCreated": len(ids),
 	})
+
+	// Probe the newly imported proxies in the background so the usable
+	// state is fresh and persisted shortly after import.
+	if len(ids) > 0 {
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			s.pool.ProbeAll(10 * time.Second)
+			_ = s.persistPool()
+		}()
+	}
 }
 
 // workerExists reports whether a worker with the given id exists.
@@ -278,6 +288,12 @@ func (s *Server) workerExists(id string) bool {
 // apiPoolProbe probes all enabled proxies (or specific ids).
 func (s *Server) apiPoolProbe(w http.ResponseWriter, r *http.Request) {
 	latencies := s.pool.ProbeAll(10 * time.Second)
+	// Persist probe results so the relay (which reads cfg.ProxyPool) sees
+	// the updated usable flags even after a restart.
+	if err := s.persistPool(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"message": err.Error()}})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"latencies": latencies})
 }
 

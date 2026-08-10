@@ -165,7 +165,7 @@ func (c *Client) attemptOne(ctx context.Context, worker *rotator.State, method, 
 		cli = &http.Client{Transport: transport}
 	}
 
-	c.logger.Debug("forward", "worker", worker.ID, "proxy", proxyID, "url", upstreamURL)
+	c.logger.Info("forward", "worker", worker.ID, "proxy", proxyID, "url", upstreamURL)
 
 	resp, err := cli.Do(req)
 	if err != nil {
@@ -284,7 +284,10 @@ func (c *Client) resolveWorkerProxy(w *rotator.State) *config.Proxy {
 		return nil
 	}
 	pp, ok := c.cfg.FindPoolProxy(w.ProxyID)
-	if !ok || !pp.Enabled || !pp.Usable {
+	// A bound proxy is used whenever it exists and is enabled. The usable
+	// flag is a probe hint (UI state); failures are handled by worker
+	// cooldown/rotation, matching the original TS gateway behaviour.
+	if !ok || !pp.Enabled {
 		return nil
 	}
 	return &config.Proxy{
