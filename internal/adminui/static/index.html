@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OCFreeRelay — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/admin/static/style.css">
+</head>
+<body>
+  <!-- Login -->
+  <div id="loginView" class="login-wrap hidden">
+    <div class="login-card">
+      <div class="login-logo">OCFreeRelay</div>
+      <p class="login-sub">Admin console</p>
+      <label class="field" for="loginPass">Password</label>
+      <input class="input" id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password">
+      <button class="btn btn-primary" id="loginBtn" style="margin-top:14px">Sign in</button>
+      <div class="login-err" id="loginErr"></div>
+      <p class="login-hint" id="setupHint" style="display:none">No admin password set yet — set one now. This becomes the login password for the console.</p>
+    </div>
+  </div>
+
+  <!-- App -->
+  <div id="appView" class="app hidden">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-name">OCFreeRelay</span>
+        <span class="pill" id="runPill">—</span>
+      </div>
+      <nav class="topnav">
+        <button class="nav-btn" data-page="overview">Overview</button>
+        <button class="nav-btn" data-page="workers">Workers</button>
+        <button class="nav-btn" data-page="pool">Proxy Pool</button>
+        <button class="nav-btn" data-page="callkeys">Call Keys</button>
+        <button class="nav-btn" data-page="gateway">Gateway</button>
+        <button class="nav-btn" data-page="usage">Usage</button>
+      </nav>
+      <div class="topbar-right">
+        <button class="btn btn-small" id="refreshBtn">⟳ Refresh</button>
+        <button class="btn btn-small ghost" id="logoutBtn">Logout</button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="page" id="page-overview">
+        <h1>Overview</h1>
+        <p class="sub">Gateway health, workers and proxy pool at a glance.</p>
+        <div class="cards" id="ovCards"></div>
+        <div class="panel">
+          <div class="panel-hd"><h2>Workers</h2><span class="muted mono" id="ovTotals"></span></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Worker</th><th>Status</th><th>Req</th><th>OK</th><th>Err</th>
+                  <th>Tokens</th><th>Cache r/w</th><th>Cache rate</th><th>Last error</th>
+                </tr>
+              </thead>
+              <tbody id="ovWorkers"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="page hidden" id="page-workers">
+        <h1>Workers</h1>
+        <p class="sub">Each worker is one OpenCode account. 429 free-limit bans it for 24h automatically.</p>
+        <div class="panel">
+          <div class="panel-hd">
+            <h2>Worker list</h2>
+            <button class="btn btn-small btn-primary" id="addWorkerBtn">＋ Add worker</button>
+          </div>
+          <div id="workerList"></div>
+        </div>
+      </section>
+
+      <section class="page hidden" id="page-pool">
+        <h1>Proxy Pool</h1>
+        <p class="sub">HTTP / SOCKS5 proxies. Import a .txt file (one URL per line), probe health, prune dead.</p>
+        <div class="panel">
+          <div class="panel-hd">
+            <h2>Pool</h2>
+            <div class="actions">
+              <label class="btn btn-small" for="txtImport">↑ Import TXT</label>
+              <input type="file" id="txtImport" accept=".txt,.list,text/plain" hidden>
+              <button class="btn btn-small" id="probeBtn">Probe all</button>
+              <button class="btn btn-small danger" id="pruneBtn">Prune dead</button>
+            </div>
+          </div>
+          <div id="poolList"></div>
+          <div class="hint" id="importResult"></div>
+        </div>
+      </section>
+
+      <section class="page hidden" id="page-callkeys">
+        <h1>Call Keys</h1>
+        <p class="sub">Keys your clients use to call the gateway. When auth is required, /v1/* rejects unknown keys.</p>
+        <div class="panel">
+          <div class="panel-hd">
+            <h2>Keys</h2>
+            <button class="btn btn-small btn-primary" id="addKeyBtn">＋ Add key</button>
+          </div>
+          <div id="keyList"></div>
+        </div>
+      </section>
+
+      <section class="page hidden" id="page-gateway">
+        <h1>Gateway</h1>
+        <p class="sub">Upstream target and identity headers.</p>
+        <div class="panel">
+          <div class="form-row"><label>Upstream base URL</label><input class="input" id="gBase"></div>
+          <div class="form-row"><label>Listen port (restart to apply)</label><input class="input" id="gPort" type="number"></div>
+          <div class="form-row"><label>CLI User-Agent</label><input class="input" id="gUA"></div>
+          <div class="form-row"><label>x-opencode-client</label><input class="input" id="gClient"></div>
+          <div class="form-row"><label>x-opencode-project</label><input class="input" id="gProject"></div>
+          <div class="check-row"><input type="checkbox" id="gSynth"><label for="gSynth">Synthesize CLI identity headers</label></div>
+          <div class="check-row"><input type="checkbox" id="gFreeFilter"><label for="gFreeFilter">Filter /v1/models to free models only</label></div>
+          <div class="check-row"><input type="checkbox" id="gReqAuth"><label for="gReqAuth">Require call key auth on /v1/*</label></div>
+          <div class="form-row"><label>Change admin password (leave empty to keep)</label><input class="input" id="gPassword" type="password" placeholder="new password"></div>
+          <button class="btn btn-primary" id="saveGatewayBtn">Save changes</button>
+        </div>
+      </section>
+
+      <section class="page hidden" id="page-usage">
+        <h1>Usage</h1>
+        <p class="sub">Token usage by worker. Deleting a worker never deletes its history.</p>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Worker</th><th>Req</th><th>Chat</th><th>Models</th><th>Prompt tok</th><th>Completion tok</th><th>Total tok</th><th>Cache read</th><th>Cache write</th><th>Last req</th></tr></thead>
+              <tbody id="usageBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast hidden" id="toast"></div>
+
+  <!-- Modal -->
+  <div class="modal hidden" id="modal">
+    <div class="modal-card">
+      <div class="modal-hd"><h2 id="modalTitle"></h2><button class="modal-x" id="modalClose">×</button></div>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+<script src="/admin/static/app.js"></script>
+</body>
+</html>
