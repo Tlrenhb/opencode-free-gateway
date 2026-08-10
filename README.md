@@ -1,5 +1,7 @@
 # opencode-free-gateway
 
+**English** | [简体中文](README.zh-CN.md)
+
 OpenAI-compatible LLM gateway for **OpenCode Zen free models**, written in Go
 with **zero third-party dependencies** (standard library only).
 
