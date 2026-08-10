@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Tlrenhb/ocfreelay-go/internal/adminui"
-	"github.com/Tlrenhb/ocfreelay-go/internal/auth"
-	"github.com/Tlrenhb/ocfreelay-go/internal/config"
-	"github.com/Tlrenhb/ocfreelay-go/internal/pool"
-	"github.com/Tlrenhb/ocfreelay-go/internal/relayproxy"
-	"github.com/Tlrenhb/ocfreelay-go/internal/rotator"
-	"github.com/Tlrenhb/ocfreelay-go/internal/stats"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/adminui"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/auth"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/config"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/pool"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/relayproxy"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/rotator"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/stats"
 )
 
 // Server is the assembled HTTP application.
@@ -106,7 +106,7 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"service": "ocfreelay-go",
+		"service": "opencode-free-gateway",
 		"uptime":  time.Since(s.started).String(),
 	})
 }

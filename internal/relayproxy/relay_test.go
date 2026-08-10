@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Tlrenhb/ocfreelay-go/internal/config"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/config"
 )
 
 func TestStripClientMetadata(t *testing.T) {

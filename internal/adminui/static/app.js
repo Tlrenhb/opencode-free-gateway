@@ -1,4 +1,4 @@
-/* OCFreeRelay admin app — talks to /admin/api/* */
+/* opencode-free-gateway admin app — talks to /admin/api/* */
 const $ = (id) => document.getElementById(id);
 
 let status = null;

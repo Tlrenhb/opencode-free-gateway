@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Tlrenhb/ocfreelay-go/internal/config"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/config"
 )
 
 // Dialer caches transports keyed by proxy endpoint so connections are pooled.

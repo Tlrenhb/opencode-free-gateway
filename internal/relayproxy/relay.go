@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Tlrenhb/ocfreelay-go/internal/config"
-	"github.com/Tlrenhb/ocfreelay-go/internal/rotator"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/config"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/rotator"
 )
 
 // ErrNoWorker is returned when the rotator has no workers configured.

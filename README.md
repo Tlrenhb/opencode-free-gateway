@@ -1,4 +1,4 @@
-# OCFreeRelay-Go
+# opencode-free-gateway
 
 OpenAI-compatible LLM gateway for **OpenCode Zen free models**, written in Go
 with **zero third-party dependencies** (standard library only).

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Tlrenhb/ocfreelay-go/internal/auth"
-	"github.com/Tlrenhb/ocfreelay-go/internal/config"
-	"github.com/Tlrenhb/ocfreelay-go/internal/pool"
-	"github.com/Tlrenhb/ocfreelay-go/internal/rotator"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/auth"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/config"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/pool"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/rotator"
 )
 
 // handleAdminLogin authenticates an admin and returns a session token.
