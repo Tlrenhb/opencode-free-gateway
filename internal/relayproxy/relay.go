@@ -27,6 +27,12 @@ import (
 // ErrNoWorker is returned when the rotator has no workers configured.
 var ErrNoWorker = errors.New("no workers configured")
 
+// MaxWorkerAttempts caps how many different workers a single client request
+// may try before the gateway surfaces the upstream error. 429/free-limit,
+// 5xx and transport errors rotate to the next worker; client errors (4xx)
+// are returned immediately.
+const MaxWorkerAttempts = 3
+
 // ProxyDialer opens egress connections through a configured proxy.
 type ProxyDialer interface {
 	TransportFor(p *config.Proxy) (http.RoundTripper, error)
@@ -70,14 +76,11 @@ func ReadBody(r *http.Request) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r.Body, 32<<20))
 }
 
-// Forward relays one /v1 request upstream using the next ready worker.
-// The request body should already be buffered via ReadBody (unless empty).
+// Forward relays one /v1 request upstream, trying up to MaxWorkerAttempts
+// different workers. Worker-level failures (429/free-limit, 5xx, transport
+// errors) rotate to the next worker; client errors (4xx) return immediately.
+// Only after every attempt fails is the last upstream error surfaced.
 func (c *Client) Forward(ctx context.Context, method, path string, query url.Values, header http.Header, rawBody []byte) (*Result, error) {
-	worker := c.rot.Pick(time.Now())
-	if worker == nil {
-		return nil, ErrNoWorker
-	}
-
 	upstreamURL := c.buildUpstreamURL(path, query)
 
 	// Minimal body fix: drop client_metadata (upstream rejects it).
@@ -86,11 +89,60 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 		return nil, fmt.Errorf("body fix: %w", err)
 	}
 
+	tried := make(map[string]bool)
+	var lastResult *Result
+	var lastErr error
+
+	for attempt := 0; attempt < MaxWorkerAttempts; attempt++ {
+		worker := c.rot.PickExcluding(time.Now(), tried)
+		if worker == nil {
+			return nil, ErrNoWorker
+		}
+		tried[worker.ID] = true
+
+		result, err := c.attemptOne(ctx, worker, method, upstreamURL, query, header, outBody)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		lastResult = result
+
+		switch {
+		case result.Status >= 200 && result.Status < 400:
+			c.rot.MarkSuccess(worker.ID)
+			return result, nil
+		case result.Status == http.StatusTooManyRequests:
+			// handled inside attemptOne (markBan/markCooldown + body kept)
+			continue
+		case result.Status >= 500:
+			c.rot.MarkCooldown(worker.ID, time.Now())
+			continue
+		default:
+			// 4xx client errors: nothing a different worker would fix.
+			return result, nil
+		}
+	}
+
+	if lastResult != nil {
+		c.logger.Warn("all worker attempts failed; surfacing last error",
+			"attempts", len(tried), "status", lastResult.Status)
+		return lastResult, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, ErrNoWorker
+}
+
+// attemptOne performs a single upstream request on the given worker.
+// On 429 it consumes the body to classify free-limit vs generic rate-limit
+// and marks the worker accordingly (ban 24h or cooldown); the body is kept
+// so the caller can still surface the upstream payload.
+func (c *Client) attemptOne(ctx context.Context, worker *rotator.State, method, upstreamURL string, query url.Values, header http.Header, outBody []byte) (*Result, error) {
 	req, err := http.NewRequestWithContext(ctx, method, upstreamURL, bytes.NewReader(outBody))
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
-
 	c.buildOutboundHeaders(req, worker.APIKey, header)
 
 	var transport http.RoundTripper
@@ -121,7 +173,6 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 		return nil, fmt.Errorf("upstream request failed: %w", err)
 	}
 
-	// 429 handling: read the (small) body to classify the failure.
 	if resp.StatusCode == http.StatusTooManyRequests {
 		bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
@@ -140,12 +191,6 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 		return &Result{Status: resp.StatusCode, Header: resp.Header, Body: resp.Body, WorkerID: worker.ID, ProxyID: proxyID}, nil
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-		c.rot.MarkSuccess(worker.ID)
-	}
-	if resp.StatusCode >= 500 {
-		c.rot.MarkCooldown(worker.ID, time.Now())
-	}
 	return &Result{Status: resp.StatusCode, Header: resp.Header, Body: resp.Body, WorkerID: worker.ID, ProxyID: proxyID}, nil
 }
 

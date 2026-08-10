@@ -126,17 +126,46 @@ func (r *Rotator) Sync(workers []struct {
 func (r *Rotator) Pick(now time.Time) *State {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.pickLocked(now, nil)
+}
+
+// PickExcluding returns the next ready worker, skipping any id in `exclude`
+// (used by the retry loop so each attempt tries a different worker).
+// Falls back to a ready worker even if all are excluded, then to the cursor.
+func (r *Rotator) PickExcluding(now time.Time, exclude map[string]bool) *State {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pickLocked(now, exclude)
+}
+
+// pickLocked is the shared selection logic; caller must hold r.mu.
+func (r *Rotator) pickLocked(now time.Time, exclude map[string]bool) *State {
 	if len(r.workers) == 0 {
 		return nil
 	}
+	// 1) prefer the sticky cursor if ready and not excluded
+	cur := r.workers[r.nextIdx%len(r.workers)]
+	if cur.Ready(now) && !exclude[cur.ID] {
+		return cur
+	}
+	// 2) scan forward for a ready worker not yet tried
 	for i := 0; i < len(r.workers); i++ {
 		idx := (r.nextIdx + i) % len(r.workers)
-		if r.workers[idx].Ready(now) {
+		w := r.workers[idx]
+		if w.Ready(now) && !exclude[w.ID] {
 			r.nextIdx = idx
-			return r.workers[idx]
+			return w
 		}
 	}
-	// Everything unavailable: return the cursor worker; callers decide fallback.
+	// 3) all ready workers were tried: take any ready one anyway
+	for i := 0; i < len(r.workers); i++ {
+		w := r.workers[(r.nextIdx+i)%len(r.workers)]
+		if w.Ready(now) {
+			r.nextIdx = 0
+			return w
+		}
+	}
+	// 4) everything in cooldown/banned: cursor fallback
 	return r.workers[r.nextIdx%len(r.workers)]
 }
 
