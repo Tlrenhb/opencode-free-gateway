@@ -133,7 +133,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		"workerStats":  statsRows,
 		"totals":       totals,
 		"overall":      overall,
-		"pool":         s.pool.All(),
+		"pool":         s.sanitizedPool(),
 		"callKeyCount": s.auth.CallKeyCount(),
 		"authEnabled":  s.cfg.RequireCallKeyAuth,
 		"port":         s.cfg.ListenPort,

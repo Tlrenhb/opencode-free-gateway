@@ -96,7 +96,8 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 	for attempt := 0; attempt < MaxWorkerAttempts; attempt++ {
 		worker := c.rot.PickExcluding(time.Now(), tried)
 		if worker == nil {
-			return nil, ErrNoWorker
+			// Every worker is hard-banned or unavailable: stop retrying.
+			break
 		}
 		tried[worker.ID] = true
 
@@ -197,6 +198,13 @@ func (c *Client) attemptOne(ctx context.Context, worker *rotator.State, method, 
 // CopyResponse streams an upstream result to the downstream client
 // (SSE-safe: plain io.Copy, chunked transfer preserved).
 func CopyResponse(w http.ResponseWriter, r *Result) {
+	CopyResponseWithHook(w, r, nil)
+}
+
+// CopyResponseWithHook streams like CopyResponse but also feeds every byte
+// to hook (if non-nil) so callers can inspect the payload (e.g. extract the
+// SSE usage block for token accounting).
+func CopyResponseWithHook(w http.ResponseWriter, r *Result, hook func([]byte)) {
 	h := w.Header()
 	for k, vv := range r.Header {
 		if strings.EqualFold(k, "Connection") || strings.EqualFold(k, "Keep-Alive") ||
@@ -209,7 +217,24 @@ func CopyResponse(w http.ResponseWriter, r *Result) {
 	}
 	w.WriteHeader(r.Status)
 	if r.Body != nil {
-		_, _ = io.Copy(w, r.Body)
+		if hook != nil {
+			buf := make([]byte, 32*1024)
+			for {
+				n, err := r.Body.Read(buf)
+				if n > 0 {
+					hook(buf[:n])
+					_, werr := w.Write(buf[:n])
+					if werr != nil {
+						break
+					}
+				}
+				if err != nil {
+					break
+				}
+			}
+		} else {
+			_, _ = io.Copy(w, r.Body)
+		}
 		r.Body.Close()
 	}
 }

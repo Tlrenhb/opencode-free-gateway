@@ -37,11 +37,14 @@ type WorkerStat struct {
 	LastRequestAt    *string `json:"lastRequestAt"`
 	LastStatus       *int    `json:"lastStatus"`
 	// CacheRate computed on the fly (read / prompt) — see Rate().
-	rate *float64
+	CacheRate *float64 `json:"cacheRate"`
 }
 
 // Rate returns cache hit rate (0..1) or nil when no prompt tokens.
 func (w *WorkerStat) Rate() *float64 {
+	if w.CacheRate != nil {
+		return w.CacheRate
+	}
 	if w.PromptTokens <= 0 {
 		return nil
 	}
@@ -148,14 +151,16 @@ func (s *Store) AddTokens(account string, u TokenUsage) {
 }
 
 // ForAccounts returns snapshots for the given account ids, creating zero
-// rows for ids without history.
+// rows for ids without history. The computed cache rate is filled in.
 func (s *Store) ForAccounts(ids []string) []WorkerStat {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]WorkerStat, 0, len(ids))
 	for _, id := range ids {
 		if w, ok := s.stats[id]; ok {
-			out = append(out, *w)
+			copy := *w
+			copy.CacheRate = w.Rate()
+			out = append(out, copy)
 		} else {
 			out = append(out, WorkerStat{AccountID: id})
 		}
@@ -287,7 +292,7 @@ func (s *Store) persistNow() error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.path)

@@ -144,7 +144,7 @@ func (s *Store) Save(cfg *Settings) error {
 		return fmt.Errorf("encode settings: %w", err)
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write tmp: %w", err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {

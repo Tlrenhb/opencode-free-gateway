@@ -1,0 +1,19 @@
+{
+  "workers": {
+    "w1": {
+      "accountId": "w1",
+      "requestCount": 3,
+      "chatCount": 0,
+      "modelsCount": 3,
+      "successCount": 3,
+      "errorCount": 0,
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "lastRequestAt": "2026-08-10T05:09:26Z",
+      "lastStatus": 200
+    }
+  }
+}

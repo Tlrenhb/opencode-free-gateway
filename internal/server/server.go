@@ -89,6 +89,12 @@ func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// Revoke the server-side session so the token dies immediately.
+	if tok := r.Header.Get("X-Admin-Token"); tok != "" {
+		s.auth.RevokeSession(tok)
+	} else if c, err := r.Cookie("ocfr_session"); err == nil {
+		s.auth.RevokeSession(c.Value)
+	}
 	http.SetCookie(w, &http.Cookie{Name: "ocfr_session", Value: "", Path: "/", MaxAge: -1})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -152,13 +158,23 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	}
 	s.stats.RecordRequest(res.WorkerID, kind, res.Status)
 
-	// Best-effort token accounting from non-stream JSON responses.
-	if res.Status >= 200 && res.Status < 300 && !isStreaming(res.Header) && strings.Contains(
-		strings.ToLower(res.Header.Get("Content-Type")), "application/json") {
-		if usage, err := extractUsage(res.Body); err == nil && usage != nil {
-			s.stats.AddTokens(res.WorkerID, *usage)
-		} else {
-			_ = res.Body.Close()
+	// Token accounting: non-stream JSON responses are parsed directly;
+	// SSE responses are observed via a side-channel hook on the stream.
+	if res.Status >= 200 && res.Status < 300 {
+		if isStreaming(res.Header) {
+			parser := &sseUsageParser{}
+			relayproxy.CopyResponseWithHook(w, res, parser.write)
+			if usage := parser.usage(); usage != nil {
+				s.stats.AddTokens(res.WorkerID, *usage)
+			}
+			return
+		}
+		if strings.Contains(strings.ToLower(res.Header.Get("Content-Type")), "application/json") {
+			if usage, err := extractUsage(res.Body); err == nil && usage != nil {
+				s.stats.AddTokens(res.WorkerID, *usage)
+			} else {
+				_ = res.Body.Close()
+			}
 		}
 	}
 
@@ -167,6 +183,64 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 
 func isStreaming(h http.Header) bool {
 	return strings.Contains(strings.ToLower(h.Get("Content-Type")), "text/event-stream")
+}
+
+// sseUsageParser collects SSE payload bytes and extracts the last
+// `data: {...usage...}` block for token accounting. The stream itself is
+// untouched — this is a side-channel observer.
+type sseUsageParser struct {
+	buf []byte
+}
+
+func (p *sseUsageParser) write(b []byte) {
+	// Keep a bounded tail window; usage blocks sit at the end of the stream.
+	p.buf = append(p.buf, b...)
+	if len(p.buf) > 1<<20 {
+		p.buf = p.buf[len(p.buf)-(1<<20):]
+	}
+}
+
+// usage extracts the last usage object from the captured SSE tail.
+func (p *sseUsageParser) usage() *stats.TokenUsage {
+	lines := strings.Split(string(p.buf), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var obj struct {
+			Usage *jsonUsage `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(payload), &obj); err == nil && obj.Usage != nil {
+			return obj.Usage.toTokenUsage()
+		}
+	}
+	return nil
+}
+
+type jsonUsage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+	CacheReadTokens  int64 `json:"prompt_cache_hit_tokens"`
+	CacheWriteTokens int64 `json:"prompt_cache_miss_tokens"`
+	PromptCacheHit   int64 `json:"cache_read_input_tokens"`
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+}
+
+func (u *jsonUsage) toTokenUsage() *stats.TokenUsage {
+	return &stats.TokenUsage{
+		PromptTokens:     u.PromptTokens + u.InputTokens,
+		CompletionTokens: u.CompletionTokens + u.OutputTokens,
+		TotalTokens:      u.TotalTokens,
+		CacheReadTokens:  u.CacheReadTokens + u.PromptCacheHit,
+		CacheWriteTokens: u.CacheWriteTokens,
+	}
 }
 
 // extractUsage drains a JSON body to pull the usage object, then restores the

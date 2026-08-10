@@ -165,8 +165,21 @@ func (r *Rotator) pickLocked(now time.Time, exclude map[string]bool) *State {
 			return w
 		}
 	}
-	// 4) everything in cooldown/banned: cursor fallback
-	return r.workers[r.nextIdx%len(r.workers)]
+	// 4) everything in cooldown/banned: prefer a cooldown (recoverable)
+	// worker over a hard-banned one; if every worker is hard-banned,
+	// return nil so callers can short-circuit instead of hammering
+	// accounts that are banned for 24h.
+	var cooldown *State
+	for _, w := range r.workers {
+		if !w.Banned(now) && now.Before(w.CooldownUntil) {
+			cooldown = w
+			break
+		}
+	}
+	if cooldown != nil {
+		return cooldown
+	}
+	return nil
 }
 
 // MarkSuccess resets the consecutive-failure counter.

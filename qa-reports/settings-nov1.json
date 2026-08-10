@@ -1,0 +1,16 @@
+{
+  "baseUrl": "http://127.0.0.1:9902",
+  "port": 9901,
+  "synthesizeCliHeaders": false,
+  "cliUserAgent": "opencode-cli/1.0.0",
+  "cliClient": "cli",
+  "cliProject": "default",
+  "workers": [
+    {"id": "w1", "apiKey": "key-w1"}
+  ],
+  "proxyPool": [],
+  "callKeys": [],
+  "adminPasswordHash": "pbkdf2-sha256$210000$x$y",
+  "freeModelsFilter": false,
+  "requireCallKeyAuth": false
+}

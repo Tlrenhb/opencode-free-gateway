@@ -10,7 +10,7 @@ import (
 func (s *Server) apiPool(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"pool": s.pool.All()})
+		writeJSON(w, http.StatusOK, map[string]any{"pool": s.sanitizedPool()})
 	case http.MethodPost:
 		var body struct {
 			Action *string `json:"action"`
@@ -53,6 +53,28 @@ func (s *Server) apiPool(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": map[string]any{"message": "GET/POST only"}})
 	}
+}
+
+// sanitizedPool returns pool entries with credentials masked for the admin UI.
+func (s *Server) sanitizedPool() []map[string]any {
+	items := s.pool.All()
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, map[string]any{
+			"ID":          it.ID,
+			"Name":        it.Name,
+			"Type":        it.Type,
+			"Host":        it.Host,
+			"Port":        it.Port,
+			"Username":    it.Username,
+			"Password":    "",
+			"passwordSet": it.Password != "",
+			"Enabled":     it.Enabled,
+			"Usable":      it.Usable,
+			"Source":      it.Source,
+		})
+	}
+	return out
 }
 
 // formatHostPort is a small helper for address strings.
