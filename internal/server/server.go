@@ -158,23 +158,45 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	}
 	s.stats.RecordRequest(res.WorkerID, kind, res.Status)
 
-	// Token accounting: non-stream JSON responses are parsed directly;
-	// SSE responses are observed via a side-channel hook on the stream.
-	if res.Status >= 200 && res.Status < 300 {
-		if isStreaming(res.Header) {
-			parser := &sseUsageParser{}
-			relayproxy.CopyResponseWithHook(w, res, parser.write)
-			if usage := parser.usage(); usage != nil {
-				s.stats.AddTokens(res.WorkerID, *usage)
-			}
-			return
+	// Token accounting: SSE responses are observed via a side-channel hook
+	// on the stream; non-stream JSON bodies are buffered so usage extraction
+	// doesn't deplete the body that must still be written to the client.
+	if res.Status >= 200 && res.Status < 300 && isStreaming(res.Header) {
+		parser := &sseUsageParser{}
+		relayproxy.CopyResponseWithHook(w, res, parser.write)
+		if usage := parser.usage(); usage != nil {
+			s.stats.AddTokens(res.WorkerID, *usage)
 		}
-		if strings.Contains(strings.ToLower(res.Header.Get("Content-Type")), "application/json") {
-			if usage, err := extractUsage(res.Body); err == nil && usage != nil {
-				s.stats.AddTokens(res.WorkerID, *usage)
-			} else {
-				_ = res.Body.Close()
+		return
+	}
+
+	// Non-streaming: buffer the body so we can extract usage without
+	// depleting the stream that CopyResponse needs.
+	if res.Status >= 200 && res.Status < 300 {
+		bodyBytes, rerr := io.ReadAll(io.LimitReader(res.Body, 32 << 20))
+		res.Body.Close()
+		if rerr == nil {
+			if strings.Contains(strings.ToLower(res.Header.Get("Content-Type")), "application/json") {
+				if usage, uerr := parseUsage(bodyBytes); uerr == nil && usage != nil {
+					s.stats.AddTokens(res.WorkerID, *usage)
+				}
 			}
+			// Echo headers + buffered body to client.
+			// CopyResponse would re-drain the body, so we write directly.
+			h := w.Header()
+			for k, vv := range res.Header {
+				if strings.EqualFold(k, "Connection") || strings.EqualFold(k, "Keep-Alive") ||
+					strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Upgrade") ||
+					strings.EqualFold(k, "Content-Length") {
+					continue
+				}
+				for _, v := range vv {
+					h.Add(k, v)
+				}
+			}
+			w.WriteHeader(res.Status)
+			_, _ = w.Write(bodyBytes)
+			return
 		}
 	}
 
@@ -243,13 +265,8 @@ func (u *jsonUsage) toTokenUsage() *stats.TokenUsage {
 	}
 }
 
-// extractUsage drains a JSON body to pull the usage object, then restores the
-// body for downstream. Callers must close the returned body.
-func extractUsage(body io.ReadCloser) (*stats.TokenUsage, error) {
-	data, err := io.ReadAll(io.LimitReader(body, 8<<20))
-	if err != nil {
-		return nil, err
-	}
+// parseUsage extracts the token usage from a buffered JSON response body.
+func parseUsage(body []byte) (*stats.TokenUsage, error) {
 	var doc struct {
 		Usage *struct {
 			PromptTokens     int64 `json:"prompt_tokens"`
@@ -262,7 +279,7 @@ func extractUsage(body io.ReadCloser) (*stats.TokenUsage, error) {
 			OutputTokens     int64 `json:"output_tokens"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(data, &doc); err != nil || doc.Usage == nil {
+	if err := json.Unmarshal(body, &doc); err != nil || doc.Usage == nil {
 		return nil, fmt.Errorf("no usage")
 	}
 	u := doc.Usage

@@ -509,19 +509,27 @@ func (s *Server) persistPool() error {
 
 // loadPoolIntoManager hydrates pool.Manager from persisted settings.
 func (s *Server) LoadPoolFromConfig() {
+	// NOTE: Must preserve the persisted proxy IDs. Worker→proxy bindings in
+	// settings.json reference the original px_* ids; using Import() would
+	// regenerate new ids and silently break every worker binding (gateway then
+	// falls back to direct egress). Use Restore() to keep ids stable across
+	// restarts so workers actually route through their bound proxy.
+	items := make([]pool.RestoreItem, 0, len(s.cfg.ProxyPool))
 	for _, p := range s.cfg.ProxyPool {
-		parsed, err := pool.ParseLine(p.Type + "://" + hostPort(p.Host, p.Port))
-		if err != nil {
-			continue
-		}
-		parsed.Username = p.Username
-		parsed.Password = p.Password
-		ids := make([]string, 0)
-		added, _, ids2 := s.pool.Import([]pool.Parsed{parsed})
-		_ = added
-		_ = ids
-		_ = ids2
+		items = append(items, pool.RestoreItem{
+			ID:       p.ID,
+			Name:     p.Name,
+			Type:     p.Type,
+			Host:     p.Host,
+			Port:     p.Port,
+			Username: p.Username,
+			Password: p.Password,
+			Enabled:  p.Enabled,
+			Usable:   p.Usable,
+			Source:   p.Source,
+		})
 	}
+	s.pool.Restore(items)
 }
 
 func hostPort(host string, port int) string {
