@@ -47,8 +47,25 @@ document.querySelectorAll(".nav-btn").forEach((b) => {
 /* ---------- 登录 / 首次设置 ---------- */
 
 let setupMode = false;
+const TOKEN_KEY = "ofg_session_token";
+
+function saveToken(tok) {
+  if ($("rememberMe") && $("rememberMe").checked) {
+    localStorage.setItem(TOKEN_KEY, tok);
+  } else {
+    localStorage.removeItem(TOKEN_KEY);
+  }
+}
 
 async function checkAuth() {
+  // 先尝试用记住的 token 自动恢复登录
+  const saved = localStorage.getItem(TOKEN_KEY);
+  if (saved) {
+    try {
+      const r = await fetch("/admin/api/status", { headers: { "X-Admin-Token": saved } });
+      if (r.ok) { showApp(); return; }
+    } catch (_) {}
+  }
   const r = await fetch("/admin/api/status");
   if (r.ok) { showApp(); return; }
   try {
@@ -77,8 +94,13 @@ $("loginBtn").addEventListener("click", async () => {
       return;
     }
     const d = await api.post("/admin/api/login", { password: pass });
-    if (d.token) { showApp(); await refreshAll(); }
-    else $("loginErr").textContent = "密码错误";
+    if (d.token) {
+      saveToken(d.token);
+      showApp();
+      await refreshAll();
+    } else {
+      $("loginErr").textContent = "密码错误";
+    }
   } catch (e) {
     $("loginErr").textContent = e.message;
   }
@@ -98,6 +120,7 @@ function showLogin() {
 
 $("logoutBtn").addEventListener("click", async () => {
   await fetch("/admin/api/logout", { method: "POST" }).catch(() => {});
+  localStorage.removeItem(TOKEN_KEY);
   showLogin();
 });
 

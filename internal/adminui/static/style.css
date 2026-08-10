@@ -49,6 +49,9 @@ button { cursor: pointer; }
 .login-sub { color: var(--text-2); margin: 2px 0 20px; font-size: 13px; }
 .login-err { color: var(--err); font-size: 13px; margin-top: 8px; min-height: 18px; }
 .login-hint { font-size: 12px; color: var(--text-2); margin-top: 10px; }
+.remember-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.remember-row input { accent-color: var(--accent); width: 16px; height: 16px; }
+.remember-row label { font-size: 13px; color: var(--text-2); }
 
 /* app shell */
 .app { display: flex; flex-direction: column; height: 100vh; }

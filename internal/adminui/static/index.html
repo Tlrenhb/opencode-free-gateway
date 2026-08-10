@@ -17,6 +17,10 @@
       <p class="login-sub">管理员控制台</p>
       <label class="field" for="loginPass">密码</label>
       <input class="input" id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password">
+      <div class="remember-row">
+        <input type="checkbox" id="rememberMe" checked>
+        <label for="rememberMe">记住登录状态（下次自动进入）</label>
+      </div>
       <button class="btn btn-primary" id="loginBtn" style="margin-top:14px">登录</button>
       <div class="login-err" id="loginErr"></div>
       <p class="login-hint" id="setupHint" style="display:none">尚未设置管理员密码 — 在此设置初始密码，之后用它登录控制台。</p>
