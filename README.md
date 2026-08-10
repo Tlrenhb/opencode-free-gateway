@@ -3,6 +3,13 @@
 OpenAI-compatible LLM gateway for **OpenCode Zen free models**, written in Go
 with **zero third-party dependencies** (standard library only).
 
+> **Acknowledgments** — Inspired by
+> [OCFreeRelay](https://github.com/kirafishy/OCFreeRelay) (MIT) by kirafishy.
+> This is an **independent Go reimplementation**: no code was taken from the
+> original TypeScript project, and the API surface is compatible. Original
+> project's design ideas (free-model-only serving, sticky worker affinity,
+> 429 free-limit banning) are re-implemented from scratch here.
+
 The gateway accepts any `/v1/*` request, dispatches it to a healthy worker
 (OpenCode account key), optionally egresses through that worker's bound
 HTTP/SOCKS5 proxy, and streams the response back untouched. Responses are
