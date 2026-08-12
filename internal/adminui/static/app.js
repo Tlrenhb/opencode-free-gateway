@@ -177,7 +177,8 @@ function renderOverview() {
   } else if (ps.total > 0 && ps.usable < ps.total) {
     warnHtml = '<div class="warn-banner muted-banner">代理部分可用（' + (ps.usable || 0) + ' / ' + (ps.total || 0) + '）——不可用代理已绕过。</div>';
   }
-  $("#ovBanner").innerHTML = warnHtml;
+  const bannerEl = $("ovBanner");
+  if (bannerEl) { bannerEl.innerHTML = warnHtml; }
   const cards = [
     { k: "上游", v: esc(status.baseUrl || "—") },
     { k: "Worker", v: status.workers?.length ?? 0 },
