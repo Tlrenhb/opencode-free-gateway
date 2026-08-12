@@ -10,6 +10,7 @@ import (
 	"github.com/Tlrenhb/opencode-free-gateway/internal/config"
 	"github.com/Tlrenhb/opencode-free-gateway/internal/pool"
 	"github.com/Tlrenhb/opencode-free-gateway/internal/rotator"
+	"github.com/Tlrenhb/opencode-free-gateway/internal/stats"
 )
 
 // handleAdminLogin authenticates an admin and returns a session token.
@@ -95,7 +96,33 @@ func (s *Server) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	workers := s.rot.Snapshots()
-	statsRows := s.stats.ForAccounts(idsOf(workers))
+	// Stats cover live workers PLUS every account with recorded history —
+	// deleting a worker keeps its usage visible (deletion ≠ reset).
+	statIDs := s.stats.AllAccounts()
+	live := idsOf(workers)
+	seen := make(map[string]bool, len(live))
+	for _, id := range live {
+		seen[id] = true
+	}
+	for _, id := range statIDs {
+		if !seen[id] {
+			live = append(live, id)
+		}
+	}
+	statsRows := s.stats.ForAccounts(live)
+	// Tag rows whose worker has been deleted (history kept, worker gone).
+	liveSet := make(map[string]bool, len(workers))
+	for _, w := range workers {
+		liveSet[w.ID] = true
+	}
+	type statRow struct {
+		stats.WorkerStat
+		Deleted bool `json:"deleted"`
+	}
+	rows := make([]statRow, 0, len(statsRows))
+	for _, st := range statsRows {
+		rows = append(rows, statRow{WorkerStat: st, Deleted: !liveSet[st.AccountID]})
+	}
 
 	type workerView struct {
 		ID               string `json:"id"`
@@ -123,21 +150,49 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	totals := s.stats.Totals(idsOf(workers))
-	overall := s.stats.OverallStats(idsOf(workers))
+	totals := s.stats.Totals(live)
+	overall := s.stats.OverallStats(live)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"running":      true,
 		"startedAt":    s.started.Format(time.RFC3339),
 		"baseUrl":      s.cfg.BaseURL,
 		"workers":      views,
-		"workerStats":  statsRows,
+		"workerStats":  rows,
 		"totals":       totals,
 		"overall":      overall,
 		"pool":         s.sanitizedPool(),
+		"poolState":    s.poolState(),
 		"callKeyCount": s.auth.CallKeyCount(),
 		"authEnabled":  s.cfg.RequireCallKeyAuth,
 		"port":         s.cfg.ListenPort,
 	})
+}
+
+// poolState summarizes proxy-pool health so the UI can warn when requests
+// are falling back to direct egress (all proxies unusable/disabled/empty).
+type poolState struct {
+	Total    int  `json:"total"`
+	Enabled  int  `json:"enabled"`
+	Usable   int  `json:"usable"`
+	Bypassed bool `json:"bypassed"` // true => requests egress directly
+}
+
+func (s *Server) poolState() poolState {
+	st := poolState{}
+	for _, p := range s.cfg.ProxyPool {
+		st.Total++
+		if p.Enabled {
+			st.Enabled++
+		}
+		if p.Enabled && p.Usable {
+			st.Usable++
+		}
+	}
+	// Bypass whenever there is no usable proxy to carry the request.
+	st.Bypassed = st.Usable == 0
+	// Also bypass when zero workers bind a usable proxy (bound pool only);
+	// keep it simple: if pool exists but nothing usable => bypass.
+	return st
 }
 
 func idsOf(states []rotator.State) []string {

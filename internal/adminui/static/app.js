@@ -169,10 +169,19 @@ function esc(s) {
 }
 
 function renderOverview() {
+  // 代理全不可用 → 直连警告条
+  const ps = status.poolState || {};
+  let warnHtml = "";
+  if (ps.bypassed) {
+    warnHtml = '<div class="warn-banner">⚠️ 代理池不可用（可用 ' + (ps.usable || 0) + ' / ' + (ps.total || 0) + '）——请求当前走<b>直连</b>出口。导入新代理或修复后自动恢复代理转发。</div>';
+  } else if (ps.total > 0 && ps.usable < ps.total) {
+    warnHtml = '<div class="warn-banner muted-banner">代理部分可用（' + (ps.usable || 0) + ' / ' + (ps.total || 0) + '）——不可用代理已绕过。</div>';
+  }
+  $("#ovBanner").innerHTML = warnHtml;
   const cards = [
     { k: "上游", v: esc(status.baseUrl || "—") },
     { k: "Worker", v: status.workers?.length ?? 0 },
-    { k: "代理", v: status.pool?.length ?? 0 },
+    { k: "代理", v: (ps.usable ?? 0) + " / " + (ps.total ?? 0) + " 可用" },
     { k: "调用 Key", v: status.callKeyCount ?? 0 },
     { k: "鉴权", v: status.authEnabled ? "开启" : "关闭" },
   ];
@@ -494,8 +503,11 @@ function renderUsage() {
   $("usageBody").innerHTML = rows.map((s) => {
     const id = s.AccountID || s.accountId;
     const sr = s.rate;
+    const nameHtml = s.deleted
+      ? '<strong style="opacity:0.55">' + esc(id) + '</strong> <span class="badge deleted">已删除</span>'
+      : '<strong>' + esc(id) + '</strong>';
     return '<tr>' +
-      '<td><strong>' + esc(id) + '</strong></td>' +
+      '<td>' + nameHtml + '</td>' +
       '<td class="mono">' + fmt(s.RequestCount ?? s.requestCount) + '</td>' +
       '<td class="mono">' + fmt(s.ChatCount ?? s.chatCount) + '</td>' +
       '<td class="mono">' + fmt(s.ModelsCount ?? s.modelsCount) + '</td>' +

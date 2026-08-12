@@ -132,6 +132,12 @@ th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: 
 .badge.banned { color: var(--err); background: var(--err-dim); }
 .badge.off { color: var(--muted); background: rgba(155,152,144,0.15); }
 
+/* proxy-bypass warning banner */
+.warn-banner { margin: 12px 0; padding: 10px 14px; border-radius: 12px; font-size: 13px; background: var(--warn-dim); color: var(--warn); border: 1px solid rgba(201,148,58,0.35); }
+.warn-banner b { color: inherit; }
+.warn-banner.muted-banner { background: rgba(155,152,144,0.12); color: var(--muted); border-color: rgba(155,152,144,0.25); }
+.badge.deleted { color: var(--muted); background: rgba(155,152,144,0.15); text-decoration: line-through; }
+
 /* forms */
 .field { display: block; font-size: 12px; font-weight: 600; margin: 10px 0 4px; }
 .input {

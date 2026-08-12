@@ -168,6 +168,19 @@ func (s *Store) ForAccounts(ids []string) []WorkerStat {
 	return out
 }
 
+// AllAccounts returns every account id that has recorded stats, including
+// workers that have since been deleted. Deleted-worker history must remain
+// visible in totals (a worker deletion is not a stats reset).
+func (s *Store) AllAccounts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.stats))
+	for id := range s.stats {
+		out = append(out, id)
+	}
+	return out
+}
+
 // Totals sums usage across the given workers.
 func (s *Store) Totals(ids []string) TokenUsage {
 	s.mu.Lock()
