@@ -173,7 +173,7 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	// Non-streaming: buffer the body so we can extract usage without
 	// depleting the stream that CopyResponse needs.
 	if res.Status >= 200 && res.Status < 300 {
-		bodyBytes, rerr := io.ReadAll(io.LimitReader(res.Body, 32 << 20))
+		bodyBytes, rerr := io.ReadAll(io.LimitReader(res.Body, 32<<20))
 		res.Body.Close()
 		if rerr == nil {
 			if strings.Contains(strings.ToLower(res.Header.Get("Content-Type")), "application/json") {

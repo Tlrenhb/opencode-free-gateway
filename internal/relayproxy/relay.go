@@ -279,15 +279,16 @@ func (c *Client) buildUpstreamURL(path string, query url.Values) string {
 }
 
 // resolveWorkerProxy finds the worker's bound pool proxy, if any.
+// The usable flag is a real probe result now: a proxy that fails the HTTP
+// probe (TCP open but cannot forward) is treated as missing, so the worker
+// falls back to direct egress instead of burning attempts on 502s.
+// Persisted usable state is refreshed at boot (ProbeAll) and after imports.
 func (c *Client) resolveWorkerProxy(w *rotator.State) *config.Proxy {
 	if w.ProxyID == "" {
 		return nil
 	}
 	pp, ok := c.cfg.FindPoolProxy(w.ProxyID)
-	// A bound proxy is used whenever it exists and is enabled. The usable
-	// flag is a probe hint (UI state); failures are handled by worker
-	// cooldown/rotation, matching the original TS gateway behaviour.
-	if !ok || !pp.Enabled {
+	if !ok || !pp.Enabled || !pp.Usable {
 		return nil
 	}
 	return &config.Proxy{

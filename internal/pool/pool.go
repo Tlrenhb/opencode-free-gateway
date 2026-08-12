@@ -11,11 +11,14 @@
 package pool
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -226,22 +229,89 @@ func (m *Manager) SetUsable(id string, usable bool) {
 	}
 }
 
-// Probe dials the proxy and measures latency. A nil result means unreachable.
+// Probe tests whether the proxy can actually carry an HTTPS request to the
+// upstream, not just whether its TCP port accepts a connection. A proxy that
+// accepts TCP but fails to forward HTTP is marked unusable. Returns latency
+// and success.
 func (m *Manager) Probe(id string, timeout time.Duration) (latency time.Duration, ok bool) {
 	it, found := m.items[id]
 	if !found {
 		return 0, false
 	}
-	start := time.Now()
+	// 1) fast TCP gate
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(it.Host, strconv.Itoa(it.Port)), timeout)
 	if err != nil {
 		m.SetUsable(id, false)
 		return 0, false
 	}
 	conn.Close()
+	// 2) real HTTP CONNECT / forward test to the upstream
+	start := time.Now()
+	if !m.probeHTTP(it, timeout) {
+		m.SetUsable(id, false)
+		return 0, false
+	}
 	latency = time.Since(start)
 	m.SetUsable(id, true)
 	return latency, true
+}
+
+// ProbeURL is the endpoint used for real-HTTP proxy probes. Set at startup
+// from the configured base URL; defaults to the OpenCode Zen models endpoint.
+var ProbeURL = "https://opencode.ai/zen/v1/models"
+
+// probeHTTP performs an actual request through the proxy. Any HTTP response
+// (even 4xx/5xx) proves the proxy can forward; a transport error means dead.
+func (m *Manager) probeHTTP(it item, timeout time.Duration) bool {
+	tr := probeTransport(it, timeout)
+	if tr == nil {
+		return false
+	}
+	client := &http.Client{Transport: tr, Timeout: timeout + 2*time.Second}
+	req, err := http.NewRequest("GET", ProbeURL, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer public")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	return true
+}
+
+func probeTransport(it item, timeout time.Duration) http.RoundTripper {
+	switch it.Type {
+	case "http", "https":
+		u := &url.URL{Scheme: "http", Host: net.JoinHostPort(it.Host, strconv.Itoa(it.Port))}
+		if it.Username != "" {
+			if it.Password != "" {
+				u.User = url.UserPassword(it.Username, it.Password)
+			} else {
+				u.User = url.User(it.Username)
+			}
+		}
+		return &http.Transport{
+			Proxy:                 http.ProxyURL(u),
+			TLSHandshakeTimeout:   timeout,
+			ResponseHeaderTimeout: timeout,
+			DialContext:           (&net.Dialer{Timeout: timeout}).DialContext,
+		}
+	case "socks5":
+		proxyAddr := net.JoinHostPort(it.Host, strconv.Itoa(it.Port))
+		tr := &http.Transport{
+			TLSHandshakeTimeout:   timeout,
+			ResponseHeaderTimeout: timeout,
+		}
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialSOCKS5Probe(ctx, proxyAddr, addr, it.Username, it.Password, timeout)
+		}
+		return tr
+	default:
+		return nil
+	}
 }
 
 // ProbeAll concurrently probes every enabled entry.
@@ -285,4 +355,97 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// dialSOCKS5Probe performs a minimal RFC 1928 SOCKS5 handshake + CONNECT to
+// the probe host. If the handshake or CONNECT fails, the proxy is unusable.
+func dialSOCKS5Probe(ctx context.Context, proxyAddr, target string, username, password string, timeout time.Duration) (net.Conn, error) {
+	d := &net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", proxyAddr)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (net.Conn, error) {
+		conn.Close()
+		return nil, err
+	}
+	hasAuth := username != ""
+	methods := []byte{0x00}
+	if hasAuth {
+		methods = []byte{0x02}
+	}
+	if _, err := conn.Write(append([]byte{0x05, byte(len(methods))}, methods...)); err != nil {
+		return fail(err)
+	}
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return fail(err)
+	}
+	if buf[0] != 0x05 {
+		return fail(fmt.Errorf("socks5: bad version %d", buf[0]))
+	}
+	switch buf[1] {
+	case 0x00:
+	case 0x02:
+		if !hasAuth {
+			return fail(errors.New("socks5: server requires auth"))
+		}
+		if len(username) > 255 || len(password) > 255 {
+			return fail(errors.New("socks5: creds too long"))
+		}
+		msg := []byte{0x01, byte(len(username))}
+		msg = append(msg, username...)
+		msg = append(msg, byte(len(password)))
+		msg = append(msg, password...)
+		if _, err := conn.Write(msg); err != nil {
+			return fail(err)
+		}
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return fail(err)
+		}
+		if buf[1] != 0x00 {
+			return fail(errors.New("socks5: auth rejected"))
+		}
+	default:
+		return fail(fmt.Errorf("socks5: no acceptable auth (method %d)", buf[1]))
+	}
+	host, portStr, err := net.SplitHostPort(target)
+	if err != nil {
+		return fail(err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 0 || port > 65535 {
+		return fail(errors.New("socks5: bad target port"))
+	}
+	req := []byte{0x05, 0x01, 0x00}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			req = append(req, 0x01)
+			req = append(req, ip4...)
+		} else {
+			req = append(req, 0x04)
+			req = append(req, ip.To16()...)
+		}
+	} else {
+		if len(host) > 255 {
+			return fail(errors.New("socks5: hostname too long"))
+		}
+		req = append(req, 0x03, byte(len(host)))
+		req = append(req, host...)
+	}
+	pb := make([]byte, 2)
+	pb[0] = byte(port >> 8)
+	pb[1] = byte(port & 0xff)
+	req = append(req, pb...)
+	if _, err := conn.Write(req); err != nil {
+		return fail(err)
+	}
+	reply := make([]byte, 4)
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		return fail(err)
+	}
+	if reply[1] != 0x00 {
+		return fail(fmt.Errorf("socks5 connect failed (code %d)", reply[1]))
+	}
+	return conn, nil
 }
