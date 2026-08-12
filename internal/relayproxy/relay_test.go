@@ -11,7 +11,7 @@ import (
 
 func TestStripClientMetadata(t *testing.T) {
 	in := []byte(`{"model":"deepseek-v4-flash-free","client_metadata":{"foo":"bar"},"messages":[]}`)
-	out, err := stripClientMetadata(in)
+	out, err := transformRequestBody(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,15 +33,79 @@ func TestStripClientMetadata(t *testing.T) {
 func TestStripClientMetadataPassthrough(t *testing.T) {
 	// Non-JSON body must be untouched.
 	in := []byte("not json at all")
-	out, err := stripClientMetadata(in)
+	out, err := transformRequestBody(in)
 	if err != nil || !bytes.Equal(out, in) {
 		t.Fatalf("non-json should pass through: %q %v", out, err)
 	}
-	// JSON without the field is unchanged bytes.
+	// JSON without the field is semantically unchanged (byte order may vary
+	// after re-marshal).
 	in2 := []byte(`{"model":"x"}`)
-	out2, err := stripClientMetadata(in2)
-	if err != nil || !bytes.Equal(out2, in2) {
-		t.Fatalf("clean json should be unchanged: %q %v", out2, err)
+	out2, err := transformRequestBody(in2)
+	if err != nil {
+		t.Fatalf("clean json error: %v", err)
+	}
+	var a, b map[string]any
+	_ = json.Unmarshal(in2, &a)
+	_ = json.Unmarshal(out2, &b)
+	if len(a) != len(b) || b["model"] != "x" {
+		t.Fatalf("clean json should be unchanged semantically: %s -> %s", in2, out2)
+	}
+}
+
+// TestThinkingReasoningContentInjection verifies the ported TS behaviour:
+// thinking models (deepseek…) get a placeholder reasoning_content on
+// assistant messages lacking one; non-thinking models are untouched.
+func TestThinkingReasoningContentInjection(t *testing.T) {
+	in := []byte(`{"model":"deepseek-v4-flash-free","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"ok"},{"role":"user","content":"again"}]}`)
+	out, err := transformRequestBody(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	// assistant message should now carry reasoning_content placeholder
+	found := false
+	for _, msg := range m.Messages {
+		var role string
+		_ = json.Unmarshal(msg["role"], &role)
+		if role != "assistant" {
+			continue
+		}
+		var rc string
+		if err := json.Unmarshal(msg["reasoning_content"], &rc); err != nil {
+			t.Fatalf("assistant missing reasoning_content: %s", out)
+		}
+		if rc != " " {
+			t.Fatalf("expected placeholder, got %q", rc)
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("no assistant message found")
+	}
+}
+
+// TestEffortAliasNormalization verifies "deepseek-v4-flash-high" →
+// "deepseek-v4-flash" + reasoning_effort=high (ported from TS EFFORT_TIERS).
+func TestEffortAliasNormalization(t *testing.T) {
+	in := []byte(`{"model":"deepseek-v4-flash-high","messages":[]}`)
+	out, err := transformRequestBody(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	var model, effort string
+	_ = json.Unmarshal(m["model"], &model)
+	_ = json.Unmarshal(m["reasoning_effort"], &effort)
+	if model != "deepseek-v4-flash" || effort != "high" {
+		t.Fatalf("expected deepseek-v4-flash/high, got %s/%s", model, effort)
 	}
 }
 

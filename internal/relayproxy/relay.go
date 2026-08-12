@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -83,8 +84,9 @@ func ReadBody(r *http.Request) ([]byte, error) {
 func (c *Client) Forward(ctx context.Context, method, path string, query url.Values, header http.Header, rawBody []byte) (*Result, error) {
 	upstreamURL := c.buildUpstreamURL(path, query)
 
-	// Minimal body fix: drop client_metadata (upstream rejects it).
-	outBody, err := stripClientMetadata(rawBody)
+	// Minimal body fix: drop client_metadata, normalize effort aliases, and
+	// replay reasoning_content for thinking models (upstream requirement).
+	outBody, err := transformRequestBody(rawBody)
 	if err != nil {
 		return nil, fmt.Errorf("body fix: %w", err)
 	}
@@ -239,10 +241,109 @@ func CopyResponseWithHook(w http.ResponseWriter, r *Result, hook func([]byte)) {
 	}
 }
 
-// stripClientMetadata removes the client_metadata field from a chat request
-// body. If the body is not JSON (or has no such field), it is returned
+// Thinking-model detection + reasoning_content replay, ported from the
+// original TypeScript gateway (src/relay/body.ts). OpenCode's upstream
+// requires assistant turns to carry reasoning_content for thinking models;
+// without a placeholder the upstream errors with:
+//
+//	"The `reasoning_content` in the thinking mode must be passed back to the API."
+var thinkingModelPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)deepseek`),
+	regexp.MustCompile(`(?i)\bkimi\b`),
+	regexp.MustCompile(`(?i)\bk2\b`),
+	regexp.MustCompile(`(?i)\bminimax\b`),
+	regexp.MustCompile(`(?i)\bmimo\b`),
+}
+
+const reasoningPlaceholder = " "
+
+func isThinkingMessageModel(model string) bool {
+	for _, re := range thinkingModelPatterns {
+		if re.MatchString(model) {
+			return true
+		}
+	}
+	return false
+}
+
+// injectReasoningContentForThinkingModel adds a placeholder
+// reasoning_content to every assistant message that does not already carry a
+// non-empty one. Only runs for thinking models.
+func injectReasoningContentForThinkingModel(payload map[string]json.RawMessage) (map[string]json.RawMessage, bool) {
+	msgsRaw, ok := payload["messages"]
+	if !ok {
+		return payload, false
+	}
+	var msgs []map[string]json.RawMessage
+	if err := json.Unmarshal(msgsRaw, &msgs); err != nil {
+		return payload, false
+	}
+	modified := false
+	for i, m := range msgs {
+		var role string
+		_ = json.Unmarshal(m["role"], &role)
+		if role != "assistant" {
+			continue
+		}
+		var rc string
+		hasRC := false
+		if raw, ok := m["reasoning_content"]; ok {
+			if err := json.Unmarshal(raw, &rc); err == nil && strings.TrimSpace(rc) != "" {
+				hasRC = true
+			}
+		}
+		if hasRC {
+			continue
+		}
+		m["reasoning_content"] = json.RawMessage(`" "`)
+		msgs[i] = m
+		modified = true
+	}
+	if modified {
+		out, err := json.Marshal(msgs)
+		if err != nil {
+			return payload, false
+		}
+		payload["messages"] = out
+	}
+	return payload, modified
+}
+
+// Effort-tier model aliases (ported from TS EFFORT_TIERS): map
+// "deepseek-v4-flash-high" → model "deepseek-v4-flash" + reasoning_effort.
+var effortTiers = map[string][]string{
+	"deepseek-v4-pro":   {"low", "medium", "high", "max"},
+	"deepseek-v4-flash": {"high", "max"},
+	"glm-5.2":           {"high", "max"},
+	"mimo-v2.5":         {"high", "max"},
+	"grok-4.5":          {"low", "medium", "high"},
+	"hy3":               {"none", "low", "high"},
+	"kimi-k3":           {"max"},
+	"qwen3.6-plus":      {"high", "max"},
+	"qwen3.7-max":       {"high", "max"},
+	"qwen3.7-plus":      {"high", "max"},
+}
+
+func parseEffortLevel(model string) (baseModel, effort string, ok bool) {
+	for base, levels := range effortTiers {
+		for _, lv := range levels {
+			if model == base+"-"+lv {
+				return base, lv, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// transformRequestBody applies the minimal OpenCode free-model request body
+// fixes (ported from the original TS gateway):
+//  1. drop client_metadata (upstream rejects it)
+//  2. effort-tier aliases → base model + reasoning_effort
+//  3. thinking models: inject reasoning_content placeholder on assistant turns
+//
+// Everything else passes through untouched. Non-JSON bodies are returned
 // unchanged.
-func stripClientMetadata(raw []byte) ([]byte, error) {
+func transformRequestBody(raw []byte) ([]byte, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return raw, nil
 	}
@@ -251,10 +352,29 @@ func stripClientMetadata(raw []byte) ([]byte, error) {
 		// Not JSON — pass through untouched.
 		return raw, nil
 	}
-	if _, ok := payload["client_metadata"]; !ok {
-		return raw, nil
-	}
+	// 1) strip client_metadata
 	delete(payload, "client_metadata")
+
+	// model for effort/thinking decisions
+	var model string
+	if m, ok := payload["model"]; ok {
+		_ = json.Unmarshal(m, &model)
+	}
+
+	// 2) effort-tier alias normalization
+	if base, effort, ok := parseEffortLevel(model); ok {
+		payload["model"], _ = json.Marshal(base)
+		if _, exists := payload["reasoning_effort"]; !exists {
+			payload["reasoning_effort"], _ = json.Marshal(effort)
+		}
+		model = base
+	}
+
+	// 3) thinking models: assistant messages need reasoning_content
+	if isThinkingMessageModel(model) {
+		payload, _ = injectReasoningContentForThinkingModel(payload)
+	}
+
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
