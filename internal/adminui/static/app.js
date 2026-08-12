@@ -124,7 +124,7 @@ function showApp() {
   $("appView").classList.remove("hidden");
   // 页面记忆：恢复上次停留的页面
   const last = localStorage.getItem(PAGE_KEY);
-  if (last && $("page-" + last) && $('button[data-page="' + last + '"]')) {
+  if (last && $("page-" + last) && document.querySelector('.nav-btn[data-page="' + last + '"]')) {
     switchPage(last);
   }
 }
