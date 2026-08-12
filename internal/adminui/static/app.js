@@ -48,12 +48,23 @@ document.querySelectorAll(".nav-btn").forEach((b) => {
 
 let setupMode = false;
 const TOKEN_KEY = "ofg_session_token";
+const PASS_KEY = "ofg_saved_password";
+const PAGE_KEY = "ofg_last_page";
 
 function saveToken(tok) {
   if ($("rememberMe") && $("rememberMe").checked) {
     localStorage.setItem(TOKEN_KEY, tok);
   } else {
     localStorage.removeItem(TOKEN_KEY);
+  }
+}
+
+function savePassword() {
+  const pass = $("loginPass").value;
+  if ($("rememberPass") && $("rememberPass").checked && pass) {
+    localStorage.setItem(PASS_KEY, pass);
+  } else if ($("rememberPass") && !$("rememberPass").checked) {
+    localStorage.removeItem(PASS_KEY);
   }
 }
 
@@ -95,6 +106,7 @@ $("loginBtn").addEventListener("click", async () => {
     }
     const d = await api.post("/admin/api/login", { password: pass });
     if (d.token) {
+      savePassword();
       saveToken(d.token);
       showApp();
       await refreshAll();
@@ -110,12 +122,22 @@ $("loginPass").addEventListener("keydown", (e) => { if (e.key === "Enter") $("lo
 function showApp() {
   $("loginView").classList.add("hidden");
   $("appView").classList.remove("hidden");
+  // 页面记忆：恢复上次停留的页面
+  const last = localStorage.getItem(PAGE_KEY);
+  if (last && $("page-" + last) && $('button[data-page="' + last + '"]')) {
+    switchPage(last);
+  }
 }
 function showLogin() {
   $("appView").classList.add("hidden");
   $("loginView").classList.remove("hidden");
-  $("loginPass").value = "";
   $("loginErr").textContent = "";
+  // 自动填入记住的密码
+  const savedPass = localStorage.getItem(PASS_KEY);
+  if (savedPass) {
+    $("loginPass").value = savedPass;
+    $("rememberPass").checked = true;
+  }
 }
 
 $("logoutBtn").addEventListener("click", async () => {
@@ -126,12 +148,24 @@ $("logoutBtn").addEventListener("click", async () => {
 
 /* ---------- 导航 ---------- */
 
+function switchPage(page) {
+  document.querySelectorAll(".nav-btn").forEach((x) => x.classList.remove("active"));
+  const btn = document.querySelector('.nav-btn[data-page="' + page + '"]');
+  if (btn) btn.classList.add("active");
+  document.querySelectorAll(".page").forEach((p) => p.classList.add("hidden"));
+  const target = $("page-" + page);
+  if (target) {
+    target.classList.remove("hidden");
+    target.classList.remove("page-enter");
+    void target.offsetWidth; // restart animation
+    target.classList.add("page-enter");
+  }
+  localStorage.setItem(PAGE_KEY, page);
+}
+
 document.querySelectorAll(".nav-btn").forEach((b) => {
   b.addEventListener("click", () => {
-    document.querySelectorAll(".nav-btn").forEach((x) => x.classList.remove("active"));
-    b.classList.add("active");
-    document.querySelectorAll(".page").forEach((p) => p.classList.add("hidden"));
-    $("page-" + b.dataset.page).classList.remove("hidden");
+    switchPage(b.dataset.page);
   });
 });
 
