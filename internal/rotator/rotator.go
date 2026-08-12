@@ -139,33 +139,31 @@ func (r *Rotator) PickExcluding(now time.Time, exclude map[string]bool) *State {
 }
 
 // pickLocked is the shared selection logic; caller must hold r.mu.
+// Round-robin: every pick advances the cursor so successive requests rotate
+// through all ready workers instead of sticking to one (as requested).
 func (r *Rotator) pickLocked(now time.Time, exclude map[string]bool) *State {
 	if len(r.workers) == 0 {
 		return nil
 	}
-	// 1) prefer the sticky cursor if ready and not excluded
-	cur := r.workers[r.nextIdx%len(r.workers)]
-	if cur.Ready(now) && !exclude[cur.ID] {
-		return cur
-	}
-	// 2) scan forward for a ready worker not yet tried
+	// 1) scan forward for a ready worker not yet tried, advancing the
+	//    cursor each pick so requests round-robin across workers
 	for i := 0; i < len(r.workers); i++ {
 		idx := (r.nextIdx + i) % len(r.workers)
 		w := r.workers[idx]
 		if w.Ready(now) && !exclude[w.ID] {
-			r.nextIdx = idx
+			r.nextIdx = (idx + 1) % len(r.workers)
 			return w
 		}
 	}
-	// 3) all ready workers were tried: take any ready one anyway
+	// 2) all ready workers were tried: take any ready one anyway
 	for i := 0; i < len(r.workers); i++ {
 		w := r.workers[(r.nextIdx+i)%len(r.workers)]
 		if w.Ready(now) {
-			r.nextIdx = 0
+			r.nextIdx = (r.nextIdx + 1) % len(r.workers)
 			return w
 		}
 	}
-	// 4) everything in cooldown/banned: prefer a cooldown (recoverable)
+	// 3) everything in cooldown/banned: prefer a cooldown (recoverable)
 	// worker over a hard-banned one; if every worker is hard-banned,
 	// return nil so callers can short-circuit instead of hammering
 	// accounts that are banned for 24h.
@@ -177,6 +175,7 @@ func (r *Rotator) pickLocked(now time.Time, exclude map[string]bool) *State {
 		}
 	}
 	if cooldown != nil {
+		r.nextIdx = (r.nextIdx + 1) % len(r.workers)
 		return cooldown
 	}
 	return nil

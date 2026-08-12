@@ -17,7 +17,7 @@ func spec(id, key string) struct {
 	}{ID: id, APIKey: key}
 }
 
-func TestStickyPick(t *testing.T) {
+func TestRoundRobinPick(t *testing.T) {
 	r := New()
 	r.Sync([]struct {
 		ID      string
@@ -30,9 +30,14 @@ func TestStickyPick(t *testing.T) {
 	if first == nil || first.ID != "a" {
 		t.Fatalf("expected first pick 'a', got %+v", first)
 	}
+	// round-robin: second pick must advance to the next worker, not stick
 	second := r.Pick(now)
-	if second.ID != "a" {
-		t.Fatalf("expected sticky 'a', got %q", second.ID)
+	if second == nil || second.ID != "b" {
+		t.Fatalf("expected round-robin pick 'b', got %+v", second)
+	}
+	third := r.Pick(now)
+	if third == nil || third.ID != "a" {
+		t.Fatalf("expected round-robin wraparound pick 'a', got %+v", third)
 	}
 }
 
