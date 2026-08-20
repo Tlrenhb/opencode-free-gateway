@@ -65,17 +65,19 @@ func (c *Client) buildOutboundHeaders(req *http.Request, apiKey string, clientHe
 		}
 	}
 
-	// Optional CLI identity synthesis.
-	if c.cfg.SynthesizeCLI {
-		if req.Header.Get("User-Agent") == "" {
+	// CLI identity synthesis ("disguise as OpenCode client"): whenever a CLI
+	// user-agent is configured, the upstream sees the OpenCode-style identity
+	// regardless of what the caller sent. Identity headers are forcibly
+	// overwritten so no caller UA leaks (this runs regardless of the legacy
+	// SynthesizeCLI flag so the disguise is reliable).
+	if c.cfg.CLIUserAgent != "" || c.cfg.SynthesizeCLI {
+		if c.cfg.CLIUserAgent != "" {
 			req.Header.Set("User-Agent", c.cfg.CLIUserAgent)
 		}
-		if req.Header.Get("x-opencode-client") == "" {
-			req.Header.Set("x-opencode-client", c.cfg.CLIClient)
-		}
-		if req.Header.Get("x-opencode-project") == "" {
-			req.Header.Set("x-opencode-project", c.cfg.CLIProject)
-		}
+		req.Header.Set("x-opencode-client", c.cfg.CLIClient)
+		req.Header.Set("x-opencode-project", c.cfg.CLIProject)
+		req.Header.Set("x-title", "opencode")
+		req.Header.Set("x-source", "opencode")
 		if req.Header.Get("x-opencode-request") == "" {
 			req.Header.Set("x-opencode-request", newUUID())
 		}

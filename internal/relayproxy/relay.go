@@ -90,6 +90,7 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 	if err != nil {
 		return nil, fmt.Errorf("body fix: %w", err)
 	}
+	c.logOutbound(method, path, header, outBody)
 
 	tried := make(map[string]bool)
 	var lastResult *Result
@@ -137,6 +138,48 @@ func (c *Client) Forward(ctx context.Context, method, path string, query url.Val
 	return nil, ErrNoWorker
 }
 
+// logOutbound records the outbound request's model, reasoning effort, key
+// request headers, and full body so the exact upstream traffic is observable.
+func (c *Client) logOutbound(method, path string, header http.Header, body []byte) {
+	attrs := []any{"method", method, "path", path}
+	if len(bytes.TrimSpace(body)) > 0 {
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(body, &payload); err == nil {
+			var model string
+			if m, ok := payload["model"]; ok {
+				_ = json.Unmarshal(m, &model)
+			}
+			var effort string
+			if r, ok := payload["reasoning_effort"]; ok {
+				_ = json.Unmarshal(r, &effort)
+			}
+			var thinking string
+			if r, ok := payload["thinking"]; ok {
+				_ = json.Unmarshal(r, &thinking)
+			}
+			attrs = append(attrs, "model", model, "reasoning_effort", effort, "thinking", thinking)
+		}
+		attrs = append(attrs, "body", string(body))
+	}
+	if header != nil {
+		hdrs := map[string]string{}
+		for name, vals := range header {
+			v := ""
+			if len(vals) > 0 {
+				v = vals[0]
+			}
+			if strings.EqualFold(name, "Authorization") && v != "" {
+				if len(v) > 8 {
+					v = v[:8] + "..."
+				}
+			}
+			hdrs[name] = v
+		}
+		attrs = append(attrs, "headers", hdrs)
+	}
+	c.logger.Info("outbound", attrs...)
+}
+
 // attemptOne performs a single upstream request on the given worker.
 // On 429 it consumes the body to classify free-limit vs generic rate-limit
 // and marks the worker accordingly (ban 24h or cooldown); the body is kept
@@ -147,6 +190,7 @@ func (c *Client) attemptOne(ctx context.Context, worker *rotator.State, method, 
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 	c.buildOutboundHeaders(req, worker.APIKey, header)
+	c.logger.Info("outbound-req", "url", upstreamURL, "headers", outboundRealHeaders(req.Header))
 
 	var transport http.RoundTripper
 	var proxyID string
@@ -309,6 +353,38 @@ func injectReasoningContentForThinkingModel(payload map[string]json.RawMessage) 
 	return payload, modified
 }
 
+// normalizeDeveloperRole rewrites OpenAI-style `developer` roles to `system`.
+// The upstream Console schema only accepts system/user/assistant/tool/
+// latest_reminder and rejects `developer` with a 400 deserialize error.
+func normalizeDeveloperRole(payload map[string]json.RawMessage) (map[string]json.RawMessage, bool) {
+	msgsRaw, ok := payload["messages"]
+	if !ok {
+		return payload, false
+	}
+	var msgs []map[string]json.RawMessage
+	if err := json.Unmarshal(msgsRaw, &msgs); err != nil {
+		return payload, false
+	}
+	modified := false
+	for i, m := range msgs {
+		var role string
+		_ = json.Unmarshal(m["role"], &role)
+		if role == "developer" {
+			m["role"] = json.RawMessage(`"system"`)
+			msgs[i] = m
+			modified = true
+		}
+	}
+	if modified {
+		out, err := json.Marshal(msgs)
+		if err != nil {
+			return payload, false
+		}
+		payload["messages"] = out
+	}
+	return payload, modified
+}
+
 // Effort-tier model aliases (ported from TS EFFORT_TIERS): map
 // "deepseek-v4-flash-high" → model "deepseek-v4-flash" + reasoning_effort.
 var effortTiers = map[string][]string{
@@ -375,6 +451,9 @@ func transformRequestBody(raw []byte) ([]byte, error) {
 		payload, _ = injectReasoningContentForThinkingModel(payload)
 	}
 
+	// 4) developer role -> system (upstream Console rejects developer)
+	payload, _ = normalizeDeveloperRole(payload)
+
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -425,4 +504,23 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+
+// outboundRealHeaders returns a compact masked snapshot of the real outbound
+// request headers (what actually goes upstream after buildOutboundHeaders).
+func outboundRealHeaders(h http.Header) map[string]string {
+	out := map[string]string{}
+	for k, vv := range h {
+		v := ""
+		if len(vv) > 0 {
+			v = vv[0]
+		}
+		if strings.EqualFold(k, "Authorization") && len(v) > 8 {
+			out[k] = v[:12] + "..."
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }

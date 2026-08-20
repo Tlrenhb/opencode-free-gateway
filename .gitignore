@@ -2,3 +2,4 @@ data/
 dist/
 relay
 *.log
+relay-stable

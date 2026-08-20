@@ -5,7 +5,9 @@
 //   - Sticky affinity: keep using the same worker until it fails, so the
 //     upstream prompt cache stays warm on one account.
 //   - A 429 whose body mentions "FreeUsageLimitError" means the whole account
-//     hit its free quota: the worker is hard-banned for 24h.
+//     hit its free quota: the worker is hard-banned until the next day.
+//     BanDuration (24h) is the historical default; marks are now anchored to
+//     the next local midnight so bans reset daily.
 //   - Other failures back off exponentially; too many consecutive failures
 //     auto-disable the worker for a short window.
 package rotator
@@ -215,8 +217,16 @@ func (r *Rotator) MarkCooldown(id string, now time.Time) {
 	w.CooldownUntil = now.Add(backoff)
 }
 
+// nextMidnight returns the first instant of the next calendar day in the
+// same location as now — the daily-reset boundary for hard bans.
+func nextMidnight(now time.Time) time.Time {
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Add(24 * time.Hour)
+}
+
 // MarkBan hard-bans a worker (typically for free-usage-limit 429)
 // for the given duration. Callers pass BanDuration unless overridden.
+// A default 24h ban is anchored to the next local midnight so the whole
+// pool resets once every day; an overridden duration still counts from now.
 func (r *Rotator) MarkBan(id string, dur time.Duration, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -224,7 +234,11 @@ func (r *Rotator) MarkBan(id string, dur time.Duration, now time.Time) {
 	if w == nil {
 		return
 	}
-	w.BannedUntil = now.Add(dur)
+	if dur == BanDuration {
+		w.BannedUntil = nextMidnight(now)
+	} else {
+		w.BannedUntil = now.Add(dur)
+	}
 	w.CooldownUntil = time.Time{}
 	w.ConsecutiveFails = 0
 }

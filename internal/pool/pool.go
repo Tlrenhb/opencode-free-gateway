@@ -11,6 +11,7 @@
 package pool
 
 import (
+	"sync"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -112,6 +113,7 @@ func ParseBatch(text string) (valid []Parsed, invalid []string) {
 
 // Manager owns the pool entries used by the gateway.
 type Manager struct {
+	mu    sync.RWMutex
 	items map[string]item
 	order []string
 }
@@ -136,6 +138,8 @@ func NewManager() *Manager {
 
 // All returns all entries in insertion order.
 func (m *Manager) All() []item {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	out := make([]item, 0, len(m.order))
 	for _, id := range m.order {
 		out = append(out, m.items[id])
@@ -145,6 +149,8 @@ func (m *Manager) All() []item {
 
 // Get returns a single entry by id.
 func (m *Manager) Get(id string) (item, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	it, ok := m.items[id]
 	return it, ok
 }
@@ -206,6 +212,8 @@ func (m *Manager) Remove(id string) bool {
 // Prune deletes every entry that is disabled or unusable.
 // Returns removed count and the ids that were removed.
 func (m *Manager) Prune() (removed int, ids []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	keep := make([]string, 0, len(m.order))
 	for _, id := range m.order {
 		it := m.items[id]
@@ -223,6 +231,8 @@ func (m *Manager) Prune() (removed int, ids []string) {
 
 // SetUsable updates the probe result flag for one entry.
 func (m *Manager) SetUsable(id string, usable bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if it, ok := m.items[id]; ok {
 		it.Usable = usable
 		m.items[id] = it
@@ -234,7 +244,7 @@ func (m *Manager) SetUsable(id string, usable bool) {
 // accepts TCP but fails to forward HTTP is marked unusable. Returns latency
 // and success.
 func (m *Manager) Probe(id string, timeout time.Duration) (latency time.Duration, ok bool) {
-	it, found := m.items[id]
+	it, found := m.Get(id)
 	if !found {
 		return 0, false
 	}
